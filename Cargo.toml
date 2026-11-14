@@ -16,9 +16,16 @@ name = "hanyeong-probe"
 path = "src/bin/probe/main.rs"
 
 [dependencies]
+directories = "6.0.0"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.1"
+tray-icon = "0.26"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10.1"
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62.2"
