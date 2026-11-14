@@ -22,16 +22,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::core::state::ScreenRect;
-use crate::core::style::{BadgeMetrics, badge_metrics};
-
-/// 배지 하나의 겉모습
-#[derive(Debug, Clone, PartialEq)]
-pub struct BadgeLook {
-    pub label: String,
-    pub rgb: (u8, u8, u8),
-    pub font_size: f64,
-    pub opacity: f64,
-}
+use crate::core::style::{BadgeLook, BadgeMetrics, badge_metrics};
 
 pub struct BadgeOverlay {
     mtm: MainThreadMarker,

@@ -3,6 +3,7 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 1단계 기술 검증 | AX 캐럿 조회, 권한 확인, 마우스 위치, Electron 접근성 활성화 추가
+//! - 2026-11-14 | 4단계 진단 개선 | 좌표 실패 시 AX 오류 코드가 -1로 덮이던 문제 수정, 빈 좌표(EmptyBounds) 구분
 //!
 //! 권한: 캐럿 조회는 "손쉬운 사용" 권한이 필요하다. 마우스 위치(CGEvent)는 권한이 필요 없다.
 //! 좌표: AX와 CGEvent 모두 주 모니터 좌상단 원점(core::state 좌표 규칙과 같음).
@@ -30,9 +31,14 @@ pub enum CaretError {
     NoFocusedElement(i32),
     /// 텍스트 입력란이 아니거나 선택 범위를 제공하지 않음
     NoSelectedRange(i32),
-    /// 범위의 화면 좌표를 제공하지 않음
+    /// 범위의 화면 좌표 요청이 실패함 (마지막 AXError 코드, AXValue 형식 불일치는 -1)
     NoBounds(i32),
+    /// 좌표 요청은 성공했지만 크기 0 또는 원점(0,0)인 쓸 수 없는 사각형을 돌려줌
+    EmptyBounds,
 }
+
+/// AXValue에서 기대한 형식의 값을 꺼내지 못했을 때 쓰는 오류 코드(AX 오류 코드와 겹치지 않음)
+const VALUE_TYPE_MISMATCH: i32 = -1;
 
 /// 이 프로세스가 손쉬운 사용 권한을 받았는지 확인한다(안내창을 띄우지 않음).
 pub fn is_trusted() -> bool {
@@ -115,7 +121,11 @@ fn bounds_for_range(element: &CFType, range: CFRange) -> Result<CGRect, i32> {
             &mut rect as *mut CGRect as *mut c_void,
         )
     };
-    if ok == 0 { Err(-1) } else { Ok(rect) }
+    if ok == 0 {
+        Err(VALUE_TYPE_MISMATCH)
+    } else {
+        Ok(rect)
+    }
 }
 
 /// 일부 앱은 길이 0 범위에 (0,0,0,0)을 돌려준다. 높이가 없거나 원점이면 쓸 수 없는 값으로 본다.
@@ -160,49 +170,55 @@ pub fn focused_caret_rect() -> Result<ScreenRect, CaretError> {
         )
     };
     if ok == 0 {
-        return Err(CaretError::NoSelectedRange(-1));
+        return Err(CaretError::NoSelectedRange(VALUE_TYPE_MISMATCH));
     }
 
     let caret_index = selected.location;
-    let mut last_error = -1;
-
-    match bounds_for_range(
-        &focused,
+    // (요청할 범위, 캐럿을 사각형 오른쪽 끝에서 읽는지)
+    let mut attempts = vec![(
         CFRange {
             location: caret_index,
             length: 0,
         },
-    ) {
-        Ok(rect) if is_usable(&rect) => return Ok(caret_from_rect(rect.origin.x, &rect)),
-        Ok(_) => {}
-        Err(error) => last_error = error,
-    }
+        false,
+    )];
     if caret_index > 0 {
-        match bounds_for_range(
-            &focused,
+        attempts.push((
             CFRange {
                 location: caret_index - 1,
                 length: 1,
             },
-        ) {
-            Ok(rect) if is_usable(&rect) => {
-                return Ok(caret_from_rect(rect.origin.x + rect.size.width, &rect));
-            }
-            Ok(_) => {}
-            Err(error) => last_error = error,
-        }
+            true,
+        ));
     }
-    match bounds_for_range(
-        &focused,
+    attempts.push((
         CFRange {
             location: caret_index,
             length: 1,
         },
-    ) {
-        Ok(rect) if is_usable(&rect) => Ok(caret_from_rect(rect.origin.x, &rect)),
-        Ok(_) => Err(CaretError::NoBounds(-1)),
-        Err(error) => Err(CaretError::NoBounds(error.max(last_error))),
+        false,
+    ));
+
+    // 빈 사각형을 한 번이라도 받았으면 그것을 실패 이유로 보고한다(오류 코드보다 원인 파악에 유용).
+    let mut failure = CaretError::NoBounds(VALUE_TYPE_MISMATCH);
+    for (range, right_edge) in attempts {
+        match bounds_for_range(&focused, range) {
+            Ok(rect) if is_usable(&rect) => {
+                let x = if right_edge {
+                    rect.origin.x + rect.size.width
+                } else {
+                    rect.origin.x
+                };
+                return Ok(caret_from_rect(x, &rect));
+            }
+            Ok(_) => failure = CaretError::EmptyBounds,
+            Err(error) if failure != CaretError::EmptyBounds => {
+                failure = CaretError::NoBounds(error);
+            }
+            Err(_) => {}
+        }
     }
+    Err(failure)
 }
 
 /// 포커스된 앱의 프로세스 ID

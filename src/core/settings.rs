@@ -3,6 +3,7 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 2단계 core 모듈 | 설정 구조체, 로드(누락·손상 시 기본값), 원자적 저장 추가
+//! - 2026-11-14 | 4단계 macOS 권한 안내 | 손쉬운 사용 권한 안내창 표시 여부 저장
 //!
 //! 파일 위치: OS 표준 설정 폴더의 `config.toml`
 //!   macOS   ~/Library/Application Support/dev.hanyeong.hanyeong-indicator/config.toml
@@ -55,6 +56,9 @@ pub struct Settings {
     /// 입력 모드가 바뀐 순간 배지를 잠깐 크게 강조
     pub emphasize_on_change: bool,
     pub launch_at_login: bool,
+    /// macOS 손쉬운 사용 권한 안내창을 이미 띄웠는지.
+    /// 거부한 사용자에게 실행할 때마다 안내창을 띄우지 않도록 처음 한 번만 띄운다.
+    pub accessibility_prompt_shown: bool,
 }
 
 impl Default for Settings {
@@ -66,6 +70,7 @@ impl Default for Settings {
             position: BadgePosition::default(),
             emphasize_on_change: true,
             launch_at_login: false,
+            accessibility_prompt_shown: false,
         }
     }
 }
@@ -162,6 +167,7 @@ mod tests {
             position: BadgePosition::Right,
             emphasize_on_change: false,
             launch_at_login: true,
+            accessibility_prompt_shown: true,
         };
         settings.save(&path).unwrap();
         let (loaded, warning) = Settings::load(&path);

@@ -3,6 +3,8 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 3단계 macOS 오버레이 | 표시 켜기/끄기, 크기, 불투명도, 위치, 전환 강조, 종료 메뉴 추가
+//! - 2026-11-14 | 4단계 macOS 권한 안내 | 손쉬운 사용 권한 상태·설정 열기 항목 추가(macOS 전용)
+//! - 2026-11-14 | 5단계 Windows 오버레이 | 모드 글자 아이콘 이미지 지원(Windows는 제목 글자를 표시하지 못함)
 //!
 //! 별도 설정 창(WebView)을 두지 않고 이 메뉴가 설정 화면 역할을 한다.
 //! 메뉴 클릭은 tray-icon의 전역 채널로 들어오므로, 앱 루프가 주기적으로 `poll`을 호출해 꺼낸다.
@@ -12,7 +14,7 @@
 use tray_icon::menu::{
     CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
 };
-use tray_icon::{TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::core::placement::BadgePosition;
 use crate::core::settings::{BadgeSize, Settings};
@@ -22,8 +24,15 @@ use crate::core::settings::{BadgeSize, Settings};
 pub enum TrayCommand {
     /// 설정이 바뀜(저장 필요)
     SettingsChanged,
+    /// 시스템 설정의 손쉬운 사용 화면 열기(macOS)
+    OpenAccessibilitySettings,
     Quit,
 }
+
+#[cfg(target_os = "macos")]
+const PERMISSION_GRANTED_TEXT: &str = "캐럿 추적: 손쉬운 사용 권한 있음";
+#[cfg(target_os = "macos")]
+const PERMISSION_NEEDED_TEXT: &str = "손쉬운 사용 권한 허용… (캐럿 옆 표시에 필요)";
 
 const SIZE_CHOICES: [(BadgeSize, &str); 3] = [
     (BadgeSize::Small, "작게"),
@@ -44,7 +53,14 @@ pub struct Tray {
     opacities: Vec<(f64, CheckMenuItem)>,
     positions: Vec<(BadgePosition, CheckMenuItem)>,
     emphasize: CheckMenuItem,
+    /// 손쉬운 사용 권한 상태 겸 설정 열기 항목. 권한이 있으면 비활성화한다.
+    #[cfg(target_os = "macos")]
+    permission: MenuItem,
     quit: MenuItem,
+}
+
+fn tooltip(mode_label: &str) -> String {
+    format!("한영 표시기: {mode_label}")
 }
 
 fn choice_items<T: Copy>(choices: &[(T, &str)]) -> Vec<(T, CheckMenuItem)> {
@@ -71,7 +87,12 @@ fn find<T: Copy>(items: &[(T, CheckMenuItem)], id: &MenuId) -> Option<T> {
 
 impl Tray {
     /// 아이콘과 메뉴를 만든다. macOS에서는 NSApplication 이벤트 루프가 돌기 시작한 뒤 호출해야 한다.
-    pub fn new(settings: &Settings, mode_label: &str) -> Result<Self, String> {
+    /// `icon`: 모드 글자 이미지(RGBA, 정사각형 한 변 길이). Windows는 아이콘 없이 만들 수 없어 필수다.
+    pub fn new(
+        settings: &Settings,
+        mode_label: &str,
+        icon: Option<(Vec<u8>, u32)>,
+    ) -> Result<Self, String> {
         let show = CheckMenuItem::new("입력 상태 배지 표시", true, settings.enabled, None);
         let sizes = choice_items(&SIZE_CHOICES);
         let opacities = choice_items(&OPACITY_CHOICES);
@@ -89,8 +110,18 @@ impl Tray {
         let position_menu = submenu("위치", &positions)?;
         let separator_top = PredefinedMenuItem::separator();
         let separator_bottom = PredefinedMenuItem::separator();
-        let menu = Menu::with_items(&[
-            &show,
+        let mut items: Vec<&dyn IsMenuItem> = Vec::new();
+        #[cfg(target_os = "macos")]
+        let permission = MenuItem::new(PERMISSION_NEEDED_TEXT, true, None);
+        #[cfg(target_os = "macos")]
+        let separator_permission = PredefinedMenuItem::separator();
+        #[cfg(target_os = "macos")]
+        items.extend([
+            &permission as &dyn IsMenuItem,
+            &separator_permission as &dyn IsMenuItem,
+        ]);
+        items.extend([
+            &show as &dyn IsMenuItem,
             &separator_top,
             &size_menu,
             &opacity_menu,
@@ -98,15 +129,18 @@ impl Tray {
             &emphasize,
             &separator_bottom,
             &quit,
-        ])
-        .map_err(|error| error.to_string())?;
+        ]);
+        let menu = Menu::with_items(&items).map_err(|error| error.to_string())?;
 
-        let icon = TrayIconBuilder::new()
+        let mut builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_title(mode_label)
-            .with_tooltip("한영 표시기")
-            .build()
-            .map_err(|error| error.to_string())?;
+            .with_tooltip(tooltip(mode_label));
+        if let Some((rgba, size)) = icon {
+            builder = builder
+                .with_icon(Icon::from_rgba(rgba, size, size).map_err(|error| error.to_string())?);
+        }
+        let icon = builder.build().map_err(|error| error.to_string())?;
 
         let tray = Self {
             icon,
@@ -115,15 +149,36 @@ impl Tray {
             opacities,
             positions,
             emphasize,
+            #[cfg(target_os = "macos")]
+            permission,
             quit,
         };
         tray.sync(settings);
         Ok(tray)
     }
 
-    /// 메뉴바에 현재 입력 모드 글자를 표시한다(macOS). Windows는 아이콘 그림으로 바꿀 예정(5단계).
+    /// 메뉴바에 현재 입력 모드 글자를 표시한다(macOS). Windows는 제목을 무시하므로 툴팁만 바뀐다.
     pub fn set_mode_label(&self, label: &str) {
         self.icon.set_title(Some(label));
+        let _ = self.icon.set_tooltip(Some(tooltip(label)));
+    }
+
+    /// 아이콘 그림을 바꾼다(Windows 알림 영역용). 실패하면 이전 그림을 유지한다.
+    pub fn set_mode_icon(&self, rgba: Vec<u8>, size: u32) {
+        if let Ok(icon) = Icon::from_rgba(rgba, size, size) {
+            let _ = self.icon.set_icon(Some(icon));
+        }
+    }
+
+    /// 손쉬운 사용 권한 상태를 메뉴에 반영한다(macOS).
+    #[cfg(target_os = "macos")]
+    pub fn set_accessibility_granted(&self, granted: bool) {
+        self.permission.set_text(if granted {
+            PERMISSION_GRANTED_TEXT
+        } else {
+            PERMISSION_NEEDED_TEXT
+        });
+        self.permission.set_enabled(!granted);
     }
 
     /// 체크 상태를 설정 값에 맞춘다.
@@ -148,6 +203,10 @@ impl Tray {
             let id = event.id();
             if id == self.quit.id() {
                 return Some(TrayCommand::Quit);
+            }
+            #[cfg(target_os = "macos")]
+            if id == self.permission.id() {
+                return Some(TrayCommand::OpenAccessibilitySettings);
             }
             if id == self.show.id() {
                 settings.enabled = !settings.enabled;

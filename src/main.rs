@@ -1,15 +1,20 @@
 //! 한영 표시기 앱 진입점. 실제 구현은 OS별 `platform::*::app`에 있다.
 
+// Windows release 빌드에서 콘솔 창이 뜨지 않게 한다(디버그 빌드는 진단 출력을 보려고 콘솔 유지).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 #[cfg(target_os = "macos")]
 fn main() {
     hanyeong_indicator::platform::macos::app::run();
 }
 
-// Windows 앱 본체는 5단계에서 구현한다. 그때까지는 진단 도구(hanyeong-probe)만 동작한다.
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 fn main() {
-    eprintln!(
-        "이 플랫폼의 앱 본체는 아직 구현되지 않았습니다. hanyeong-probe로 진단할 수 있습니다."
-    );
+    hanyeong_indicator::platform::windows::app::run();
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn main() {
+    eprintln!("macOS와 Windows만 지원합니다.");
     std::process::exit(1);
 }
