@@ -4,10 +4,11 @@
 //! 변경사항 내역:
 //! - 2026-11-14 | 3단계 macOS 오버레이 | 모드별 색, 배지 치수, 강조 배율·시간 추가
 //! - 2026-11-14 | 5단계 Windows 오버레이 | OS 공통 배지 모양(BadgeLook) 계산을 macOS 오버레이에서 옮겨 옴
+//! - 2026-11-14 | 사용자 피드백 반영 | 시스템 기본 모양(BadgeFill::System) 추가, 언어별 색은 선택 사항으로
 
 use std::time::Duration;
 
-use super::settings::Settings;
+use super::settings::{BadgeStyle, Settings};
 use super::state::InputMode;
 
 /// 모드가 바뀐 뒤 크게 보여주는 시간
@@ -27,11 +28,21 @@ pub fn badge_rgb(mode: &InputMode) -> (u8, u8, u8) {
     }
 }
 
+/// 배지 배경을 칠하는 방식
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadgeFill {
+    /// OS 기본 모양. 밝은 모드에서는 밝은 회색 바탕에 검은 글자, 어두운 모드에서는 반대.
+    /// macOS 기본 입력 소스 표시기와 비슷하게 보이도록 한다.
+    System,
+    /// 언어별 색 바탕에 흰 글자
+    Colored((u8, u8, u8)),
+}
+
 /// 배지 하나의 겉모습. OS별 오버레이가 이 값대로 그린다.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BadgeLook {
     pub label: String,
-    pub rgb: (u8, u8, u8),
+    pub fill: BadgeFill,
     /// 글자 크기(논리 pt). Windows는 모니터 DPI 배율을 곱해 픽셀로 바꾼다.
     pub font_size: f64,
     /// 창 전체 불투명도(0~1)
@@ -44,7 +55,10 @@ pub fn badge_look(mode: &InputMode, settings: &Settings, emphasized: bool) -> Ba
     let scale = if emphasized { EMPHASIS_SCALE } else { 1.0 };
     BadgeLook {
         label: mode.badge_label().to_string(),
-        rgb: badge_rgb(mode),
+        fill: match settings.style {
+            BadgeStyle::System => BadgeFill::System,
+            BadgeStyle::Colored => BadgeFill::Colored(badge_rgb(mode)),
+        },
         font_size: settings.size.font_size() * scale,
         opacity: if emphasized { 1.0 } else { settings.opacity },
     }
@@ -108,6 +122,21 @@ mod tests {
         assert_eq!(rounded_rect_coverage(0.0, 0.0, 32.0, 32.0, 8.0), 0.0);
         let edge = rounded_rect_coverage(2.0, 2.0, 32.0, 32.0, 8.0);
         assert!(edge > 0.0 && edge < 1.0, "모서리 경계는 부분 투명: {edge}");
+    }
+
+    #[test]
+    fn style_setting_selects_fill() {
+        let system = badge_look(&InputMode::Hangul, &Settings::default(), false);
+        assert_eq!(system.fill, BadgeFill::System);
+        let colored_settings = Settings {
+            style: BadgeStyle::Colored,
+            ..Settings::default()
+        };
+        let colored = badge_look(&InputMode::Hangul, &colored_settings, false);
+        assert_eq!(
+            colored.fill,
+            BadgeFill::Colored(badge_rgb(&InputMode::Hangul))
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 5단계 Windows 오버레이 | 레이어드 팝업 창, 둥근 영역, 모니터 작업 영역·DPI 조회 추가
+//! - 2026-11-14 | 사용자 피드백 반영 | 시스템 모양(밝은 회색 바탕) 지원
 //!
 //! 창 성질(바꾸면 사용성이 깨지는 값):
 //! - WS_EX_NOACTIVATE: 배지가 떠도 사용자가 입력하던 창의 포커스를 뺏지 않는다.
@@ -31,9 +32,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
-use super::render::{draw_badge, measure_text};
+use super::render::{SYSTEM_BACKGROUND, SYSTEM_TEXT, WHITE, draw_badge, measure_text};
 use crate::core::state::ScreenRect;
-use crate::core::style::{BadgeLook, BadgeMetrics, badge_metrics};
+use crate::core::style::{BadgeFill, BadgeLook, BadgeMetrics, badge_metrics};
 
 /// 기준 DPI(배율 100%)
 const BASE_DPI: f64 = 96.0;
@@ -42,7 +43,8 @@ const BASE_DPI: f64 = 96.0;
 #[derive(Default)]
 struct PaintState {
     label: String,
-    rgb: (u8, u8, u8),
+    background: (u8, u8, u8),
+    foreground: (u8, u8, u8),
     pixel_height: i32,
 }
 
@@ -67,7 +69,14 @@ unsafe extern "system" fn window_proc(
                     let mut rect = RECT::default();
                     let _ =
                         windows::Win32::UI::WindowsAndMessaging::GetClientRect(window, &mut rect);
-                    draw_badge(dc, &rect, &state.label, state.rgb, state.pixel_height);
+                    draw_badge(
+                        dc,
+                        &rect,
+                        &state.label,
+                        state.background,
+                        state.foreground,
+                        state.pixel_height,
+                    );
                 });
                 let _ = EndPaint(window, &paint);
             }
@@ -146,10 +155,15 @@ impl BadgeOverlay {
         let height = self.metrics.height as i32;
         let diameter = (self.metrics.corner_radius * 2.0) as i32;
 
+        let (background, foreground) = match look.fill {
+            BadgeFill::System => (SYSTEM_BACKGROUND, SYSTEM_TEXT),
+            BadgeFill::Colored(rgb) => (rgb, WHITE),
+        };
         PAINT.with(|state| {
             *state.borrow_mut() = PaintState {
                 label: look.label.clone(),
-                rgb: look.rgb,
+                background,
+                foreground,
                 pixel_height,
             };
         });

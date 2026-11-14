@@ -3,6 +3,7 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 3단계 macOS 오버레이 | 모드 변경 판정과 강조 기간 추가
+//! - 2026-11-14 | 입력 시작 시 표시 | 마지막 변경 시각(last_change) 추가
 //!
 //! macOS는 한 번 전환에 같은 변경 알림을 여러 번(1단계 실측: 32ms 안에 3번) 보낸다.
 //! 알림 횟수가 아니라 모드 값이 실제로 바뀌었는지로 판정해 강조가 반복되지 않게 한다.
@@ -15,6 +16,7 @@ use super::state::InputMode;
 pub struct ModeTracker {
     current: Option<InputMode>,
     emphasize_until: Option<Instant>,
+    last_change: Option<Instant>,
 }
 
 impl ModeTracker {
@@ -25,8 +27,11 @@ impl ModeTracker {
             .current
             .as_ref()
             .is_some_and(|current| *current != mode);
-        if changed && !emphasis.is_zero() {
-            self.emphasize_until = Some(now + emphasis);
+        if changed {
+            self.last_change = Some(now);
+            if !emphasis.is_zero() {
+                self.emphasize_until = Some(now + emphasis);
+            }
         }
         self.current = Some(mode);
         changed
@@ -34,6 +39,11 @@ impl ModeTracker {
 
     pub fn current(&self) -> Option<&InputMode> {
         self.current.as_ref()
+    }
+
+    /// 입력 모드가 마지막으로 바뀐 시각. 시작 후 한 번도 안 바뀌었으면 None.
+    pub fn last_change(&self) -> Option<Instant> {
+        self.last_change
     }
 
     pub fn is_emphasized(&self, now: Instant) -> bool {
@@ -76,6 +86,22 @@ mod tests {
         let later = start + Duration::from_millis(30);
         assert!(!tracker.observe(InputMode::Latin, later, EMPHASIS));
         assert!(!tracker.is_emphasized(start + EMPHASIS));
+    }
+
+    #[test]
+    fn last_change_records_only_real_changes() {
+        let mut tracker = ModeTracker::default();
+        let start = Instant::now();
+        tracker.observe(InputMode::Latin, start, EMPHASIS);
+        assert_eq!(tracker.last_change(), None);
+        let changed = start + Duration::from_millis(100);
+        tracker.observe(InputMode::Hangul, changed, EMPHASIS);
+        tracker.observe(
+            InputMode::Hangul,
+            start + Duration::from_millis(200),
+            EMPHASIS,
+        );
+        assert_eq!(tracker.last_change(), Some(changed));
     }
 
     #[test]

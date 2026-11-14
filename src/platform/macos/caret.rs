@@ -4,6 +4,9 @@
 //! 변경사항 내역:
 //! - 2026-11-14 | 1단계 기술 검증 | AX 캐럿 조회, 권한 확인, 마우스 위치, Electron 접근성 활성화 추가
 //! - 2026-11-14 | 4단계 진단 개선 | 좌표 실패 시 AX 오류 코드가 -1로 덮이던 문제 수정, 빈 좌표(EmptyBounds) 구분
+//! - 2026-11-14 | 입력 시작 시 표시 | 입력란 판정(focused_input), 입력란 식별값·화면 영역 조회 추가
+//! - 2026-11-14 | 인식률 개선 | 입력란 오판정(라디오 버튼 등) 수정, 텍스트 마커 기반 캐럿 조회 추가(Chromium·Firefox·WebKit)
+//! - 2026-11-14 | 사용자 실측 반영 | 높이 4px 미만 캐럿 좌표 버림(Electron 첫 조회의 1px 좌표로 배지가 튐), 입력란 영역은 캐럿 실패 시에만 조회
 //!
 //! 권한: 캐럿 조회는 "손쉬운 사용" 권한이 필요하다. 마우스 위치(CGEvent)는 권한이 필요 없다.
 //! 좌표: AX와 CGEvent 모두 주 모니터 좌상단 원점(core::state 좌표 규칙과 같음).
@@ -11,12 +14,13 @@
 
 use std::ffi::c_void;
 
+use core_foundation::array::CFArray;
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::CFString;
 
-use super::ffi::{self, CFRange, CGRect};
+use super::ffi::{self, CFRange, CGPoint, CGRect, CGSize};
 use crate::core::state::ScreenRect;
 
 /// AX 요청 하나의 최대 대기 시간(초). 폴링 주기(100ms)보다 짧게 둔다.
@@ -27,6 +31,8 @@ const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 0.05;
 pub enum CaretError {
     /// 손쉬운 사용 권한 없음
     NotTrusted,
+    /// 포커스된 요소가 텍스트 입력란이 아님
+    NotTextInput,
     /// 포커스된 UI 요소 없음 (AXError 코드)
     NoFocusedElement(i32),
     /// 텍스트 입력란이 아니거나 선택 범위를 제공하지 않음
@@ -91,28 +97,29 @@ fn copy_attribute(element: &CFType, name: &'static str) -> Result<CFType, i32> {
     Ok(unsafe { CFType::wrap_under_create_rule(value) })
 }
 
-fn bounds_for_range(element: &CFType, range: CFRange) -> Result<CGRect, i32> {
-    // SAFETY: AXValueCreate는 Create rule
-    let range_value = unsafe {
-        CFType::wrap_under_create_rule(ffi::AXValueCreate(
-            ffi::kAXValueCFRangeType,
-            &range as *const CFRange as *const c_void,
-        ))
-    };
-    let attribute = CFString::from_static_string("AXBoundsForRange");
+fn copy_parameterized(
+    element: &CFType,
+    name: &'static str,
+    parameter: &CFType,
+) -> Result<CFType, i32> {
+    let attribute = CFString::from_static_string(name);
     let mut value: CFTypeRef = std::ptr::null();
+    // SAFETY: Copy 함수. 성공 시 value를 소유한다.
     let error = unsafe {
         ffi::AXUIElementCopyParameterizedAttributeValue(
             element.as_CFTypeRef(),
             attribute.as_concrete_TypeRef(),
-            range_value.as_CFTypeRef(),
+            parameter.as_CFTypeRef(),
             &mut value,
         )
     };
     if error != ffi::kAXErrorSuccess || value.is_null() {
         return Err(error);
     }
-    let value = unsafe { CFType::wrap_under_create_rule(value) };
+    Ok(unsafe { CFType::wrap_under_create_rule(value) })
+}
+
+fn rect_value(value: &CFType) -> Result<CGRect, i32> {
     let mut rect = CGRect::default();
     let ok = unsafe {
         ffi::AXValueGetValue(
@@ -128,9 +135,32 @@ fn bounds_for_range(element: &CFType, range: CFRange) -> Result<CGRect, i32> {
     }
 }
 
-/// 일부 앱은 길이 0 범위에 (0,0,0,0)을 돌려준다. 높이가 없거나 원점이면 쓸 수 없는 값으로 본다.
+fn bounds_for_range(element: &CFType, range: CFRange) -> Result<CGRect, i32> {
+    // SAFETY: AXValueCreate는 Create rule
+    let range_value = unsafe {
+        CFType::wrap_under_create_rule(ffi::AXValueCreate(
+            ffi::kAXValueCFRangeType,
+            &range as *const CFRange as *const c_void,
+        ))
+    };
+    rect_value(&copy_parameterized(
+        element,
+        "AXBoundsForRange",
+        &range_value,
+    )?)
+}
+
+/// 이보다 낮은 캐럿 높이(px)는 실제 글자 줄이 아닌 값으로 본다.
+/// 2026-11-14 실측: Claude 데스크톱 앱(Electron)이 입력란 진입 직후 높이 1px의 엉뚱한 좌표를 먼저 돌려줌.
+const MIN_CARET_HEIGHT: f64 = 4.0;
+
+/// 일부 앱은 길이 0 범위에 (0,0,0,0)이나 높이 1px 같은 값을 돌려준다.
+/// 높이가 너무 낮거나 원점이거나 유한하지 않으면 쓸 수 없는 값으로 본다.
 fn is_usable(rect: &CGRect) -> bool {
-    rect.size.height > 0.0 && !(rect.origin.x == 0.0 && rect.origin.y == 0.0)
+    rect.size.height >= MIN_CARET_HEIGHT
+        && rect.origin.x.is_finite()
+        && rect.origin.y.is_finite()
+        && !(rect.origin.x == 0.0 && rect.origin.y == 0.0)
 }
 
 fn caret_from_rect(x: f64, rect: &CGRect) -> ScreenRect {
@@ -142,38 +172,125 @@ fn caret_from_rect(x: f64, rect: &CGRect) -> ScreenRect {
     }
 }
 
-/// 포커스된 텍스트 입력란의 캐럿 사각형을 읽는다.
+/// 텍스트 입력란으로 보는 AXRole. 이 밖의 역할도 값(AXValue)을 바꿀 수 있으면 입력란으로 본다.
+const TEXT_INPUT_ROLES: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"];
+
+/// 포커스된 입력란 정보
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FocusedInput {
+    /// 입력란 식별값. 같은 UI 요소면 같은 값이라 "다른 입력란으로 옮김"을 판정하는 데 쓴다.
+    pub key: u64,
+    /// 캐럿 글자 위치(AXSelectedTextRange 시작). 앱이 제공하지 않으면 None
+    pub caret_index: Option<i64>,
+    pub caret: Result<ScreenRect, CaretError>,
+    /// 입력란 전체의 화면 영역. 캐럿 좌표를 못 얻을 때만 조회하며, 그때 배지 기준점으로 쓴다.
+    pub field_rect: Option<ScreenRect>,
+}
+
+fn role(element: &CFType) -> Option<String> {
+    copy_attribute(element, "AXRole")
+        .ok()?
+        .downcast::<CFString>()
+        .map(|role| role.to_string())
+}
+
+fn is_value_settable(element: &CFType) -> bool {
+    let attribute = CFString::from_static_string("AXValue");
+    let mut settable: ffi::Boolean = 0;
+    let error = unsafe {
+        ffi::AXUIElementIsAttributeSettable(
+            element.as_CFTypeRef(),
+            attribute.as_concrete_TypeRef(),
+            &mut settable,
+        )
+    };
+    error == ffi::kAXErrorSuccess && settable != 0
+}
+
+/// 텍스트 선택 정보(범위 또는 텍스트 마커)를 제공하는지
+fn has_text_selection(element: &CFType) -> bool {
+    copy_attribute(element, "AXSelectedTextRange").is_ok()
+        || copy_attribute(element, "AXSelectedTextMarkerRange").is_ok()
+}
+
+/// 입력란 판정. 값을 바꿀 수 있어도 라디오 버튼·슬라이더처럼 텍스트가 없는 요소는 제외한다
+/// (2026-11-14 측정: Chrome의 라디오 버튼이 AXValue 설정 가능으로 나와 입력란으로 오판정됨).
+fn is_text_input(element: &CFType) -> bool {
+    role(element).is_some_and(|role| TEXT_INPUT_ROLES.contains(&role.as_str()))
+        || (is_value_settable(element) && has_text_selection(element))
+}
+
+/// 텍스트 마커로 캐럿 사각형을 구한다. WebKit에서 시작된 API로 Chromium(Chrome·Electron)·Firefox도 제공한다.
+/// 범위 기반 API(AXBoundsForRange)가 빈 좌표를 주는 앱에서 쓴다.
+///
+/// 시도 순서:
+/// 1. 선택된 텍스트 마커 범위(캐럿이면 길이 0)의 사각형
+/// 2. 캐럿 바로 앞 글자 범위의 오른쪽 끝
+fn caret_from_text_marker(element: &CFType) -> Result<ScreenRect, CaretError> {
+    let selected = copy_attribute(element, "AXSelectedTextMarkerRange")
+        .map_err(CaretError::NoSelectedRange)?;
+    let failure = match copy_parameterized(element, "AXBoundsForTextMarkerRange", &selected)
+        .and_then(|value| rect_value(&value))
+    {
+        Ok(rect) if is_usable(&rect) => return Ok(caret_from_rect(rect.origin.x, &rect)),
+        Ok(_) => CaretError::EmptyBounds,
+        Err(error) => CaretError::NoBounds(error),
+    };
+
+    let previous_range =
+        copy_parameterized(element, "AXStartTextMarkerForTextMarkerRange", &selected).and_then(
+            |start| {
+                let previous =
+                    copy_parameterized(element, "AXPreviousTextMarkerForTextMarker", &start)?;
+                let pair = CFArray::from_CFTypes(&[previous, start]);
+                copy_parameterized(
+                    element,
+                    "AXTextMarkerRangeForUnorderedTextMarkers",
+                    &pair.as_CFType(),
+                )
+            },
+        );
+    match previous_range.and_then(|range| {
+        copy_parameterized(element, "AXBoundsForTextMarkerRange", &range)
+            .and_then(|value| rect_value(&value))
+    }) {
+        Ok(rect) if is_usable(&rect) => Ok(caret_from_rect(rect.origin.x + rect.size.width, &rect)),
+        Ok(_) => Err(CaretError::EmptyBounds),
+        Err(_) => Err(failure),
+    }
+}
+
+fn axvalue<T: Default>(element: &CFType, attribute: &'static str, value_type: u32) -> Option<T> {
+    let value = copy_attribute(element, attribute).ok()?;
+    let mut out = T::default();
+    let ok = unsafe {
+        ffi::AXValueGetValue(
+            value.as_CFTypeRef(),
+            value_type,
+            &mut out as *mut T as *mut c_void,
+        )
+    };
+    (ok != 0).then_some(out)
+}
+
+fn element_frame(element: &CFType) -> Option<ScreenRect> {
+    let origin: CGPoint = axvalue(element, "AXPosition", ffi::kAXValueCGPointType)?;
+    let size: CGSize = axvalue(element, "AXSize", ffi::kAXValueCGSizeType)?;
+    (size.width > 0.0 && size.height > 0.0).then_some(ScreenRect {
+        x: origin.x,
+        y: origin.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+/// 캐럿 글자 위치에서 화면 사각형을 구한다.
 ///
 /// 시도 순서:
 /// 1. 캐럿 위치의 길이 0 범위
 /// 2. 캐럿 바로 앞 글자(길이 1)의 오른쪽 끝
 /// 3. 캐럿 바로 뒤 글자(길이 1)의 왼쪽 끝
-pub fn focused_caret_rect() -> Result<ScreenRect, CaretError> {
-    if !is_trusted() {
-        return Err(CaretError::NotTrusted);
-    }
-    let system = system_wide();
-    let focused =
-        copy_attribute(&system, "AXFocusedUIElement").map_err(CaretError::NoFocusedElement)?;
-    unsafe {
-        ffi::AXUIElementSetMessagingTimeout(focused.as_CFTypeRef(), AX_MESSAGING_TIMEOUT_SECONDS)
-    };
-
-    let range_value =
-        copy_attribute(&focused, "AXSelectedTextRange").map_err(CaretError::NoSelectedRange)?;
-    let mut selected = CFRange::default();
-    let ok = unsafe {
-        ffi::AXValueGetValue(
-            range_value.as_CFTypeRef(),
-            ffi::kAXValueCFRangeType,
-            &mut selected as *mut CFRange as *mut c_void,
-        )
-    };
-    if ok == 0 {
-        return Err(CaretError::NoSelectedRange(VALUE_TYPE_MISMATCH));
-    }
-
-    let caret_index = selected.location;
+fn caret_rect_at(element: &CFType, caret_index: isize) -> Result<ScreenRect, CaretError> {
     // (요청할 범위, 캐럿을 사각형 오른쪽 끝에서 읽는지)
     let mut attempts = vec![(
         CFRange {
@@ -202,7 +319,7 @@ pub fn focused_caret_rect() -> Result<ScreenRect, CaretError> {
     // 빈 사각형을 한 번이라도 받았으면 그것을 실패 이유로 보고한다(오류 코드보다 원인 파악에 유용).
     let mut failure = CaretError::NoBounds(VALUE_TYPE_MISMATCH);
     for (range, right_edge) in attempts {
-        match bounds_for_range(&focused, range) {
+        match bounds_for_range(element, range) {
             Ok(rect) if is_usable(&rect) => {
                 let x = if right_edge {
                     rect.origin.x + rect.size.width
@@ -219,6 +336,64 @@ pub fn focused_caret_rect() -> Result<ScreenRect, CaretError> {
         }
     }
     Err(failure)
+}
+
+/// 포커스된 요소가 텍스트 입력란이면 그 정보를 읽는다.
+/// 권한이 없거나(NotTrusted) 포커스가 없거나 입력란이 아니면(NotTextInput) Err.
+pub fn focused_input() -> Result<FocusedInput, CaretError> {
+    if !is_trusted() {
+        return Err(CaretError::NotTrusted);
+    }
+    let system = system_wide();
+    let focused =
+        copy_attribute(&system, "AXFocusedUIElement").map_err(CaretError::NoFocusedElement)?;
+    unsafe {
+        ffi::AXUIElementSetMessagingTimeout(focused.as_CFTypeRef(), AX_MESSAGING_TIMEOUT_SECONDS)
+    };
+    if !is_text_input(&focused) {
+        return Err(CaretError::NotTextInput);
+    }
+
+    let key = unsafe { ffi::CFHash(focused.as_CFTypeRef()) } as u64;
+    let selected: Result<CFRange, CaretError> =
+        axvalue(&focused, "AXSelectedTextRange", ffi::kAXValueCFRangeType).ok_or_else(|| {
+            match copy_attribute(&focused, "AXSelectedTextRange") {
+                Err(error) => CaretError::NoSelectedRange(error),
+                Ok(_) => CaretError::NoSelectedRange(VALUE_TYPE_MISMATCH),
+            }
+        });
+    let (caret_index, caret) = match selected {
+        Ok(range) => (
+            Some(range.location as i64),
+            caret_rect_at(&focused, range.location),
+        ),
+        Err(error) => (None, Err(error)),
+    };
+    // 범위 기반 조회가 실패하면 텍스트 마커로 다시 시도한다. 둘 다 실패하면 원인 파악에 더 유용한 쪽을 보고한다:
+    // 범위 API 자체가 없으면 텍스트 마커 쪽 실패, 범위 API는 있는데 좌표가 없으면 그 실패.
+    let caret = caret.or_else(|range_error| {
+        caret_from_text_marker(&focused).map_err(|marker_error| match range_error {
+            CaretError::NoSelectedRange(_) => marker_error,
+            _ => range_error,
+        })
+    });
+    // 입력란 영역은 캐럿 좌표가 없을 때만 기준점으로 쓰므로 그때만 조회한다(AX 호출 2회 절약).
+    let field_rect = if caret.is_err() {
+        element_frame(&focused)
+    } else {
+        None
+    };
+    Ok(FocusedInput {
+        key,
+        caret_index,
+        caret,
+        field_rect,
+    })
+}
+
+/// 포커스된 텍스트 입력란의 캐럿 사각형(진단 도구용)
+pub fn focused_caret_rect() -> Result<ScreenRect, CaretError> {
+    focused_input()?.caret
 }
 
 /// 포커스된 앱의 프로세스 ID

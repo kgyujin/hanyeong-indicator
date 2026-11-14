@@ -6,3 +6,4 @@ pub mod settings;
 pub mod state;
 pub mod style;
 pub mod tracker;
+pub mod visibility;

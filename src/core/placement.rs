@@ -3,6 +3,8 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 2단계 core 모듈 | 배지 위치 계산, 모니터 경계 보정, 위로 뒤집기 추가
+//! - 2026-11-14 | 입력 시작 시 표시 | 캐럿 좌표가 없을 때 입력란 영역으로 캐럿 위치 추정
+//! - 2026-11-14 | 사용자 피드백 반영 | 캐럿 아래 배치를 왼쪽 맞춤에서 가운데 맞춤으로 변경(macOS 기본 표시기와 비슷하게)
 //!
 //! 좌표는 core::state의 좌표 규칙(주 모니터 좌상단 원점, y 아래로 증가)을 따른다.
 //! 모니터 좌표는 음수일 수 있다(주 모니터 왼쪽·위에 놓인 보조 모니터).
@@ -12,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::state::ScreenRect;
 
 /// 캐럿과 배지 사이 간격(px)
-const CARET_GAP: f64 = 4.0;
+const CARET_GAP: f64 = 3.0;
 /// 마우스 포인터 끝에서 배지까지 거리(px). 포인터 그림을 가리지 않을 만큼 띄운다.
 const MOUSE_OFFSET_X: f64 = 14.0;
 const MOUSE_OFFSET_Y: f64 = 20.0;
@@ -21,7 +23,7 @@ const MOUSE_OFFSET_Y: f64 = 20.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BadgePosition {
-    /// 캐럿 아래, 왼쪽 맞춤. 입력 중인 글자를 가리지 않는다.
+    /// 캐럿 바로 아래, 가운데 맞춤. macOS 기본 입력 소스 표시기와 같은 자리이고 입력 중인 글자를 가리지 않는다.
     #[default]
     Below,
     /// 캐럿 오른쪽, 세로 가운데
@@ -33,6 +35,20 @@ pub enum BadgePosition {
 pub enum Anchor {
     Caret(ScreenRect),
     Mouse { x: f64, y: f64 },
+}
+
+/// 입력란 왼쪽 위 첫 줄에 캐럿이 있다고 가정한 사각형.
+/// 캐럿 좌표를 주지 않는 앱(예: macOS의 Chromium 계열)에서 입력란 영역만 알 때 기준점으로 쓴다.
+/// 높이는 한 줄 높이(최대 22px)로 제한해, 여러 줄 입력란이어도 배지가 첫 줄 근처에 뜨게 한다.
+pub fn estimated_caret_in_field(field: ScreenRect) -> ScreenRect {
+    const INSET_X: f64 = 4.0;
+    const MAX_LINE_HEIGHT: f64 = 22.0;
+    ScreenRect {
+        x: field.x + INSET_X,
+        y: field.y,
+        width: 1.0,
+        height: field.height.min(MAX_LINE_HEIGHT),
+    }
 }
 
 /// 배지 좌상단 좌표를 계산한다.
@@ -51,7 +67,7 @@ pub fn place_badge(
     let (x, y, flipped_y) = match anchor {
         Anchor::Caret(caret) => match position {
             BadgePosition::Below => (
-                caret.x,
+                caret.x + caret.width / 2.0 - badge_width / 2.0,
                 caret.y + caret.height + CARET_GAP,
                 caret.y - CARET_GAP - badge_height,
             ),
@@ -131,6 +147,8 @@ mod tests {
     };
     const BADGE_W: f64 = 24.0;
     const BADGE_H: f64 = 20.0;
+    /// x=100, 폭 1인 캐럿 아래 가운데 맞춤한 배지의 왼쪽 끝
+    const CENTERED_X: f64 = 100.0 + 0.5 - BADGE_W / 2.0;
 
     fn caret(x: f64, y: f64) -> Anchor {
         Anchor::Caret(ScreenRect {
@@ -142,6 +160,30 @@ mod tests {
     }
 
     #[test]
+    fn field_estimate_uses_first_line_of_field() {
+        let single_line = ScreenRect {
+            x: 100.0,
+            y: 50.0,
+            width: 300.0,
+            height: 18.0,
+        };
+        assert_eq!(
+            estimated_caret_in_field(single_line),
+            ScreenRect {
+                x: 104.0,
+                y: 50.0,
+                width: 1.0,
+                height: 18.0
+            }
+        );
+        let text_area = ScreenRect {
+            height: 200.0,
+            ..single_line
+        };
+        assert_eq!(estimated_caret_in_field(text_area).height, 22.0);
+    }
+
+    #[test]
     fn below_caret_by_default() {
         let placed = place_badge(
             caret(100.0, 200.0),
@@ -150,7 +192,7 @@ mod tests {
             BADGE_H,
             &[MAIN],
         );
-        assert_eq!(placed, (100.0, 200.0 + 16.0 + CARET_GAP));
+        assert_eq!(placed, (CENTERED_X, 200.0 + 16.0 + CARET_GAP));
     }
 
     #[test]
@@ -178,7 +220,7 @@ mod tests {
             BADGE_H,
             &[MAIN],
         );
-        assert_eq!(placed, (100.0, 885.0 - CARET_GAP - BADGE_H));
+        assert_eq!(placed, (CENTERED_X, 885.0 - CARET_GAP - BADGE_H));
     }
 
     #[test]
@@ -254,6 +296,6 @@ mod tests {
             BADGE_H,
             &[],
         );
-        assert_eq!(placed, (100.0, 200.0 + 16.0 + CARET_GAP));
+        assert_eq!(placed, (CENTERED_X, 200.0 + 16.0 + CARET_GAP));
     }
 }

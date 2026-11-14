@@ -4,6 +4,8 @@
 //! 변경사항 내역:
 //! - 2026-11-14 | 2단계 core 모듈 | 설정 구조체, 로드(누락·손상 시 기본값), 원자적 저장 추가
 //! - 2026-11-14 | 4단계 macOS 권한 안내 | 손쉬운 사용 권한 안내창 표시 여부 저장
+//! - 2026-11-14 | 입력 시작 시 표시 | 표시 방식(display) 추가, 기본값은 입력을 시작할 때만
+//! - 2026-11-14 | 사용자 피드백 반영 | 모양(style) 추가(기본 시스템), 전환 강조 기본값 끔
 //!
 //! 파일 위치: OS 표준 설정 폴더의 `config.toml`
 //!   macOS   ~/Library/Application Support/dev.hanyeong.hanyeong-indicator/config.toml
@@ -40,6 +42,28 @@ impl BadgeSize {
     }
 }
 
+/// 배지를 언제 보여줄지
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayMode {
+    /// 입력란에 들어갈 때와 입력 모드를 바꿀 때 잠깐 표시(core::visibility 규칙)
+    #[default]
+    OnInputStart,
+    /// 항상 표시. 입력란이 아니면 마우스 옆에 표시
+    Always,
+}
+
+/// 배지 모양
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BadgeStyle {
+    /// OS 기본 모양(macOS 기본 입력 소스 표시기와 비슷한 회색 배지)
+    #[default]
+    System,
+    /// 언어별 색 배지
+    Colored,
+}
+
 /// 투명도 허용 범위. 0에 가까우면 배지가 안 보여 켜져 있는지 알 수 없다.
 pub const MIN_OPACITY: f64 = 0.3;
 pub const MAX_OPACITY: f64 = 1.0;
@@ -49,6 +73,8 @@ pub const MAX_OPACITY: f64 = 1.0;
 pub struct Settings {
     /// 배지 표시 여부
     pub enabled: bool,
+    pub display: DisplayMode,
+    pub style: BadgeStyle,
     pub size: BadgeSize,
     /// 평상시 불투명도(0.3~1.0). 전환 강조 중에는 1.0
     pub opacity: f64,
@@ -65,10 +91,13 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             enabled: true,
+            display: DisplayMode::default(),
+            style: BadgeStyle::default(),
             size: BadgeSize::default(),
             opacity: 0.85,
             position: BadgePosition::default(),
-            emphasize_on_change: true,
+            // 사용자 피드백(2026-11-14): 전환할 때 크게 보이는 동작이 거슬려 기본으로 끈다.
+            emphasize_on_change: false,
             launch_at_login: false,
             accessibility_prompt_shown: false,
         }
@@ -162,6 +191,8 @@ mod tests {
         let path = dir.join("nested").join("config.toml");
         let settings = Settings {
             enabled: false,
+            display: DisplayMode::Always,
+            style: BadgeStyle::Colored,
             size: BadgeSize::Large,
             opacity: 0.5,
             position: BadgePosition::Right,

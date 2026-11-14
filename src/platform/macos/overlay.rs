@@ -3,6 +3,7 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 3단계 macOS 오버레이 | NSPanel 기반 배지, 화면 목록 조회 추가
+//! - 2026-11-14 | 사용자 피드백 반영 | 시스템 모양(밝기 모드를 따르는 바탕·글자·테두리·그림자) 추가
 //!
 //! 창 성질(바꾸면 사용성이 깨지는 값):
 //! - NonactivatingPanel: 배지가 떠도 사용자가 입력하던 앱의 포커스를 뺏지 않는다.
@@ -22,7 +23,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::core::state::ScreenRect;
-use crate::core::style::{BadgeLook, BadgeMetrics, badge_metrics};
+use crate::core::style::{BadgeFill, BadgeLook, BadgeMetrics, badge_metrics};
 
 pub struct BadgeOverlay {
     mtm: MainThreadMarker,
@@ -94,14 +95,29 @@ impl BadgeOverlay {
         if self.last_look.as_ref() == Some(look) {
             return;
         }
-        let (r, g, b) = look.rgb;
-        let color = NSColor::colorWithSRGBRed_green_blue_alpha(
-            f64::from(r) / 255.0,
-            f64::from(g) / 255.0,
-            f64::from(b) / 255.0,
-            1.0,
-        );
-        self.background.setFillColor(&color);
+        match look.fill {
+            // 동적 시스템 색은 그릴 때 현재 밝기 모드(라이트/다크)로 바뀐다.
+            BadgeFill::System => {
+                self.background
+                    .setFillColor(&NSColor::windowBackgroundColor());
+                self.background.setBorderColor(&NSColor::separatorColor());
+                self.background.setBorderWidth(1.0);
+                self.label.setTextColor(Some(&NSColor::labelColor()));
+                self.panel.setHasShadow(true);
+            }
+            BadgeFill::Colored((r, g, b)) => {
+                let color = NSColor::colorWithSRGBRed_green_blue_alpha(
+                    f64::from(r) / 255.0,
+                    f64::from(g) / 255.0,
+                    f64::from(b) / 255.0,
+                    1.0,
+                );
+                self.background.setFillColor(&color);
+                self.background.setBorderWidth(0.0);
+                self.label.setTextColor(Some(&NSColor::whiteColor()));
+                self.panel.setHasShadow(false);
+            }
+        }
         self.label
             .setFont(Some(&NSFont::boldSystemFontOfSize(look.font_size)));
         self.label.setStringValue(&NSString::from_str(&look.label));

@@ -5,6 +5,9 @@
 //! - 2026-11-14 | 3단계 macOS 오버레이 | 표시 켜기/끄기, 크기, 불투명도, 위치, 전환 강조, 종료 메뉴 추가
 //! - 2026-11-14 | 4단계 macOS 권한 안내 | 손쉬운 사용 권한 상태·설정 열기 항목 추가(macOS 전용)
 //! - 2026-11-14 | 5단계 Windows 오버레이 | 모드 글자 아이콘 이미지 지원(Windows는 제목 글자를 표시하지 못함)
+//! - 2026-11-14 | 입력 시작 시 표시 | 표시 방식 메뉴(입력을 시작할 때 / 항상) 추가
+//! - 2026-11-14 | 사용자 피드백 반영 | 모양 메뉴(시스템 / 언어별 색) 추가
+//! - 2026-11-14 | 7단계 자동 실행 | 로그인할 때 자동 실행 항목 추가
 //!
 //! 별도 설정 창(WebView)을 두지 않고 이 메뉴가 설정 화면 역할을 한다.
 //! 메뉴 클릭은 tray-icon의 전역 채널로 들어오므로, 앱 루프가 주기적으로 `poll`을 호출해 꺼낸다.
@@ -17,7 +20,7 @@ use tray_icon::menu::{
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::core::placement::BadgePosition;
-use crate::core::settings::{BadgeSize, Settings};
+use crate::core::settings::{BadgeSize, BadgeStyle, DisplayMode, Settings};
 
 /// 메뉴 처리 결과 중 앱이 따로 해야 할 일
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +37,14 @@ const PERMISSION_GRANTED_TEXT: &str = "캐럿 추적: 손쉬운 사용 권한 �
 #[cfg(target_os = "macos")]
 const PERMISSION_NEEDED_TEXT: &str = "손쉬운 사용 권한 허용… (캐럿 옆 표시에 필요)";
 
+const DISPLAY_CHOICES: [(DisplayMode, &str); 2] = [
+    (DisplayMode::OnInputStart, "입력을 시작할 때 잠깐"),
+    (DisplayMode::Always, "항상"),
+];
+const STYLE_CHOICES: [(BadgeStyle, &str); 2] = [
+    (BadgeStyle::System, "시스템 기본"),
+    (BadgeStyle::Colored, "언어별 색"),
+];
 const SIZE_CHOICES: [(BadgeSize, &str); 3] = [
     (BadgeSize::Small, "작게"),
     (BadgeSize::Medium, "보통"),
@@ -49,10 +60,13 @@ const POSITION_CHOICES: [(BadgePosition, &str); 2] = [
 pub struct Tray {
     icon: TrayIcon,
     show: CheckMenuItem,
+    displays: Vec<(DisplayMode, CheckMenuItem)>,
+    styles: Vec<(BadgeStyle, CheckMenuItem)>,
     sizes: Vec<(BadgeSize, CheckMenuItem)>,
     opacities: Vec<(f64, CheckMenuItem)>,
     positions: Vec<(BadgePosition, CheckMenuItem)>,
     emphasize: CheckMenuItem,
+    launch_at_login: CheckMenuItem,
     /// 손쉬운 사용 권한 상태 겸 설정 열기 항목. 권한이 있으면 비활성화한다.
     #[cfg(target_os = "macos")]
     permission: MenuItem,
@@ -94,6 +108,8 @@ impl Tray {
         icon: Option<(Vec<u8>, u32)>,
     ) -> Result<Self, String> {
         let show = CheckMenuItem::new("입력 상태 배지 표시", true, settings.enabled, None);
+        let displays = choice_items(&DISPLAY_CHOICES);
+        let styles = choice_items(&STYLE_CHOICES);
         let sizes = choice_items(&SIZE_CHOICES);
         let opacities = choice_items(&OPACITY_CHOICES);
         let positions = choice_items(&POSITION_CHOICES);
@@ -103,8 +119,16 @@ impl Tray {
             settings.emphasize_on_change,
             None,
         );
+        let launch_at_login = CheckMenuItem::new(
+            "로그인할 때 자동 실행",
+            true,
+            settings.launch_at_login,
+            None,
+        );
         let quit = MenuItem::new("한영 표시기 종료", true, None);
 
+        let display_menu = submenu("표시 방식", &displays)?;
+        let style_menu = submenu("모양", &styles)?;
         let size_menu = submenu("크기", &sizes)?;
         let opacity_menu = submenu("불투명도", &opacities)?;
         let position_menu = submenu("위치", &positions)?;
@@ -123,10 +147,13 @@ impl Tray {
         items.extend([
             &show as &dyn IsMenuItem,
             &separator_top,
+            &display_menu,
+            &style_menu,
             &size_menu,
             &opacity_menu,
             &position_menu,
             &emphasize,
+            &launch_at_login,
             &separator_bottom,
             &quit,
         ]);
@@ -145,10 +172,13 @@ impl Tray {
         let tray = Self {
             icon,
             show,
+            displays,
+            styles,
             sizes,
             opacities,
             positions,
             emphasize,
+            launch_at_login,
             #[cfg(target_os = "macos")]
             permission,
             quit,
@@ -185,6 +215,13 @@ impl Tray {
     pub fn sync(&self, settings: &Settings) {
         self.show.set_checked(settings.enabled);
         self.emphasize.set_checked(settings.emphasize_on_change);
+        self.launch_at_login.set_checked(settings.launch_at_login);
+        for (value, item) in &self.displays {
+            item.set_checked(*value == settings.display);
+        }
+        for (value, item) in &self.styles {
+            item.set_checked(*value == settings.style);
+        }
         for (value, item) in &self.sizes {
             item.set_checked(*value == settings.size);
         }
@@ -212,6 +249,12 @@ impl Tray {
                 settings.enabled = !settings.enabled;
             } else if id == self.emphasize.id() {
                 settings.emphasize_on_change = !settings.emphasize_on_change;
+            } else if id == self.launch_at_login.id() {
+                settings.launch_at_login = !settings.launch_at_login;
+            } else if let Some(display) = find(&self.displays, id) {
+                settings.display = display;
+            } else if let Some(style) = find(&self.styles, id) {
+                settings.style = style;
             } else if let Some(size) = find(&self.sizes, id) {
                 settings.size = size;
             } else if let Some(opacity) = find(&self.opacities, id) {

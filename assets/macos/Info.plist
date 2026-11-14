@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  한영 표시기 macOS 앱 번들 정보. scripts/bundle-macos.sh가 @VERSION@을 Cargo.toml 버전으로 바꿔 복사한다.
+  LSUIElement=true: Dock 아이콘과 앱 전환기(Cmd+Tab)에 나타나지 않는 메뉴바 앱으로 실행한다.
+  CFBundleIdentifier: 손쉬운 사용 권한이 이 식별자에 붙는다. 바꾸면 사용자가 권한을 다시 허용해야 한다.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>dev.hanyeong.indicator</string>
+    <key>CFBundleName</key>
+    <string>한영 표시기</string>
+    <key>CFBundleDisplayName</key>
+    <string>한영 표시기</string>
+    <key>CFBundleExecutable</key>
+    <string>hanyeong-indicator</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

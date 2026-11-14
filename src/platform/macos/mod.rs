@@ -7,4 +7,5 @@ pub mod app;
 pub mod caret;
 mod ffi;
 pub mod ime;
+mod observer;
 pub mod overlay;

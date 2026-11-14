@@ -5,6 +5,8 @@ edition = "2024"
 description = "텍스트 커서 옆에 한/영 입력 상태를 표시하는 macOS·Windows 상주 앱"
 license = "MIT"
 publish = false
+# 바이너리가 둘(앱 본체, 진단 도구)이라 `cargo run`이 앱 본체를 실행하도록 지정한다.
+default-run = "hanyeong-indicator"
 
 [lib]
 path = "src/lib.rs"
@@ -16,6 +18,7 @@ name = "hanyeong-probe"
 path = "src/bin/probe/main.rs"
 
 [dependencies]
+auto-launch = "0.6"
 directories = "6.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.1"

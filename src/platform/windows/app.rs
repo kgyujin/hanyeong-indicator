@@ -3,6 +3,8 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 5·6단계 Windows 앱 | 메시지 루프, 100ms 스레드 타이머, Win32 캐럿 → UIA → 마우스 순 위치 결정
+//! - 2026-11-14 | 7단계 자동 실행 | 메뉴로 로그인 시 자동 실행 켜기/끄기, 시작할 때 등록 경로 갱신
+//! - 2026-11-14 | 입력 시작 시 표시 | 표시 방식(입력 시작 시/항상) 적용, 입력란 판정과 입력란 영역 기준점
 //!
 //! 실행 구조(모두 한 스레드):
 //! - Win32 메시지 루프(GetMessageW). tray-icon 메뉴와 배지 창 그리기도 이 루프로 처리된다.
@@ -25,11 +27,14 @@ use super::caret::{self, UiaCaret};
 use super::ime;
 use super::overlay::{BadgeOverlay, dpi_for_point, monitor_work_areas};
 use super::render::render_badge_rgba;
-use crate::core::placement::{Anchor, place_badge};
-use crate::core::settings::{Settings, default_settings_path};
+use crate::autostart;
+use crate::core::placement::{Anchor, estimated_caret_in_field, place_badge};
+use crate::core::settings::{DisplayMode, Settings, default_settings_path};
 use crate::core::state::InputMode;
+use crate::core::state::ScreenRect;
 use crate::core::style::{EMPHASIS_DURATION, badge_look, badge_rgb};
 use crate::core::tracker::ModeTracker;
+use crate::core::visibility::{CaretMark, InputContext, VisibilityTracker};
 use crate::tray::{Tray, TrayCommand};
 
 /// 입력 모드 폴링·캐럿 추적 주기(ms)
@@ -47,6 +52,7 @@ struct App {
     settings_path: Option<PathBuf>,
     debug: bool,
     last_debug_line: String,
+    visibility: VisibilityTracker,
 }
 
 thread_local! {
@@ -77,11 +83,23 @@ impl App {
         match tray.poll(&mut self.settings) {
             Some(TrayCommand::Quit) => true,
             Some(TrayCommand::SettingsChanged) => {
+                self.apply_launch_at_login();
                 self.save_settings();
                 false
             }
             // macOS 전용 항목이라 Windows 메뉴에는 없다.
             Some(TrayCommand::OpenAccessibilitySettings) | None => false,
+        }
+    }
+
+    /// 자동 실행 등록 상태를 설정에 맞춘다. 실패하면 설정과 메뉴 체크를 되돌린다.
+    fn apply_launch_at_login(&mut self) {
+        if let Err(error) = autostart::set_enabled(self.settings.launch_at_login) {
+            eprintln!("자동 실행 설정을 바꾸지 못함: {error}");
+            self.settings.launch_at_login = autostart::is_enabled();
+            if let Some(tray) = &self.tray {
+                tray.sync(&self.settings);
+            }
         }
     }
 
@@ -121,15 +139,24 @@ impl App {
             return;
         }
 
-        let anchor = snapshot
-            .as_ref()
-            .and_then(|snapshot| caret::win32_caret(&snapshot.focus))
-            .or_else(|| self.uia.as_ref().and_then(|uia| uia.caret_rect().ok()))
-            .map(Anchor::Caret)
-            .unwrap_or_else(|| {
-                let (x, y) = caret::mouse_location();
-                Anchor::Mouse { x, y }
-            });
+        // 입력란 판정과 기준점: Win32 캐럿 → UIA 입력란(캐럿 → 입력란 영역) → 마우스
+        let (context, caret_rect) = self.focused_input(snapshot.as_ref());
+        let visible = match self.settings.display {
+            DisplayMode::Always => true,
+            DisplayMode::OnInputStart => {
+                self.visibility
+                    .update(now, context, self.tracker.last_change())
+            }
+        };
+        if !visible {
+            self.overlay.hide();
+            self.debug_log(format!("[debug] mode={mode} context={context:?} 숨김"));
+            return;
+        }
+        let anchor = caret_rect.map(Anchor::Caret).unwrap_or_else(|| {
+            let (x, y) = caret::mouse_location();
+            Anchor::Mouse { x, y }
+        });
         let (anchor_x, anchor_y) = match anchor {
             Anchor::Caret(rect) => (rect.x, rect.y),
             Anchor::Mouse { x, y } => (x, y),
@@ -151,13 +178,51 @@ impl App {
                     s.focus_class, s.lang_id, s.open_status, s.conversion_mode
                 )
             });
-            let line = format!(
-                "[debug] mode={mode} {raw} anchor={anchor:?} badge=({x:.0},{y:.0} {width:.0}x{height:.0})"
-            );
-            if line != self.last_debug_line {
-                eprintln!("{line}");
-                self.last_debug_line = line;
+            self.debug_log(format!(
+                "[debug] mode={mode} {raw} context={context:?} anchor={anchor:?} badge=({x:.0},{y:.0} {width:.0}x{height:.0})"
+            ));
+        }
+    }
+
+    /// 포커스가 입력란인지와 배지 기준 사각형(캐럿 또는 입력란 영역에서 추정한 캐럿)을 구한다.
+    fn focused_input(
+        &self,
+        snapshot: Option<&ime::ImeSnapshot>,
+    ) -> (InputContext, Option<ScreenRect>) {
+        // Win32 시스템 캐럿이 있으면 텍스트 입력 중인 전통 Win32 컨트롤이다.
+        if let Some(snapshot) = snapshot
+            && let Some(rect) = caret::win32_caret(&snapshot.focus)
+        {
+            let key = snapshot.focus.focus.0 as usize as u64;
+            let context = InputContext::Field {
+                key,
+                caret: Some(CaretMark::Point(rect.x, rect.y)),
+            };
+            return (context, Some(rect));
+        }
+        let Some(uia) = &self.uia else {
+            return (InputContext::Unknown, None);
+        };
+        match uia.focused_input() {
+            Ok(Some(input)) => {
+                let caret = input.caret.ok();
+                let context = InputContext::Field {
+                    key: input.key,
+                    caret: caret.map(|rect| CaretMark::Point(rect.x, rect.y)),
+                };
+                let rect = caret.or_else(|| input.field_rect.map(estimated_caret_in_field));
+                (context, rect)
             }
+            Ok(None) => (InputContext::NotField, None),
+            Err(_) => (InputContext::Unknown, None),
+        }
+    }
+
+    /// HANYEONG_DEBUG=1 일 때, 직전과 다른 줄만 출력한다.
+    fn debug_log(&mut self, line: String) {
+        if self.debug && line != self.last_debug_line {
+            eprintln!("{line}");
+            self.last_debug_line = line;
         }
     }
 }
@@ -195,6 +260,13 @@ pub fn run() {
         }
         None => Settings::default(),
     };
+
+    // 자동 실행이 켜져 있으면 지금 실행 파일 경로로 다시 등록한다(앱을 옮기거나 업데이트한 경우 대비).
+    if settings.launch_at_login
+        && let Err(error) = autostart::set_enabled(true)
+    {
+        eprintln!("자동 실행 등록을 갱신하지 못함: {error}");
+    }
 
     let overlay = match BadgeOverlay::new() {
         Ok(overlay) => overlay,
@@ -234,6 +306,7 @@ pub fn run() {
             settings_path,
             debug: std::env::var_os("HANYEONG_DEBUG").is_some_and(|value| value == "1"),
             last_debug_line: String::new(),
+            visibility: VisibilityTracker::default(),
         });
     });
 
