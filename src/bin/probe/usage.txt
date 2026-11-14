@@ -1,0 +1,18 @@
+hanyeong-probe: 입력 모드와 캐럿 위치를 바뀔 때마다 출력하는 진단 도구
+
+사용법:
+  hanyeong-probe [--interval-ms N] [--duration S] [--prompt] [--electron-fix] [--self-test]
+
+옵션:
+  --interval-ms N  캐럿·입력 모드 폴링 주기(기본 100ms)
+  --duration S     S초 뒤 자동 종료(기본: Ctrl+C까지)
+  --prompt         (macOS) 손쉬운 사용 권한이 없으면 시스템 안내창을 띄움
+  --electron-fix   (macOS) 포커스된 앱에 AXManualAccessibility=true 설정(Electron 앱 캐럿 노출)
+  --self-test      (macOS) 켜 둔 입력 소스를 자동으로 바꿔 가며 감지 지연을 측정하고 원래 소스로 복구
+
+출력 태그:
+  [notify]  OS 알림으로 감지한 입력 모드 변경(macOS)
+  [poll]    폴링으로 감지한 입력 모드 변경
+  [caret]   캐럿 위치 변경
+  [fallback] 캐럿을 못 얻어 마우스 위치로 대체한 이유
+  [app]     포커스된 앱(또는 창 클래스) 변경
