@@ -7,6 +7,7 @@
 //! - 2026-11-14 | 입력 시작 시 표시 | 입력란 판정(focused_input), 입력란 식별값·화면 영역 조회 추가
 //! - 2026-11-14 | 인식률 개선 | 입력란 오판정(라디오 버튼 등) 수정, 텍스트 마커 기반 캐럿 조회 추가(Chromium·Firefox·WebKit)
 //! - 2026-11-14 | 사용자 실측 반영 | 높이 4px 미만 캐럿 좌표 버림(Electron 첫 조회의 1px 좌표로 배지가 튐), 입력란 영역은 캐럿 실패 시에만 조회
+//! - 2026-11-15 | 안전장치 | 높이 120px 초과 좌표 버림(Chrome 텍스트 마커가 페이지 전체 사각형을 돌려준 사례)
 //!
 //! 권한: 캐럿 조회는 "손쉬운 사용" 권한이 필요하다. 마우스 위치(CGEvent)는 권한이 필요 없다.
 //! 좌표: AX와 CGEvent 모두 주 모니터 좌상단 원점(core::state 좌표 규칙과 같음).
@@ -153,11 +154,15 @@ fn bounds_for_range(element: &CFType, range: CFRange) -> Result<CGRect, i32> {
 /// 이보다 낮은 캐럿 높이(px)는 실제 글자 줄이 아닌 값으로 본다.
 /// 2026-11-14 실측: Claude 데스크톱 앱(Electron)이 입력란 진입 직후 높이 1px의 엉뚱한 좌표를 먼저 돌려줌.
 const MIN_CARET_HEIGHT: f64 = 4.0;
+/// 이보다 높은 사각형은 캐럿이 아니라 문단·페이지 영역으로 본다.
+/// 2026-11-15 실측: Chrome 페이지 본문의 선택 텍스트 마커 범위가 페이지 전체(1849x969)를 돌려줌.
+const MAX_CARET_HEIGHT: f64 = 120.0;
 
-/// 일부 앱은 길이 0 범위에 (0,0,0,0)이나 높이 1px 같은 값을 돌려준다.
-/// 높이가 너무 낮거나 원점이거나 유한하지 않으면 쓸 수 없는 값으로 본다.
+/// 일부 앱은 길이 0 범위에 (0,0,0,0)이나 높이 1px 같은 값을, 넓은 선택에는 페이지 전체 사각형을 돌려준다.
+/// 높이가 범위를 벗어나거나 원점이거나 유한하지 않으면 쓸 수 없는 값으로 본다.
 fn is_usable(rect: &CGRect) -> bool {
     rect.size.height >= MIN_CARET_HEIGHT
+        && rect.size.height <= MAX_CARET_HEIGHT
         && rect.origin.x.is_finite()
         && rect.origin.y.is_finite()
         && !(rect.origin.x == 0.0 && rect.origin.y == 0.0)

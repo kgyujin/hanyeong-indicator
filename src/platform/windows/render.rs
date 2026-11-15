@@ -4,6 +4,7 @@
 //! 변경사항 내역:
 //! - 2026-11-14 | 5단계 Windows 오버레이 | 글꼴 생성, 글자 폭 측정, 아이콘 RGBA 렌더링 추가
 //! - 2026-11-14 | 사용자 피드백 반영 | 배경·글자 색을 인자로 받음(시스템 모양 지원)
+//! - 2026-11-15 | 어두운 테마 | 앱 테마 설정(AppsUseLightTheme)에 따라 시스템 모양 색 선택
 //!
 //! 글꼴: "Segoe UI" 굵게. 한글·가나·한자는 Windows 글꼴 연결(font linking)로 맑은 고딕 등이 대신 그린다.
 //! 품질: ClearType은 투명 배경에서 색 번짐이 생기므로 회색조 안티에일리어싱(ANTIALIASED_QUALITY)을 쓴다.
@@ -17,6 +18,7 @@ use windows::Win32::Graphics::Gdi::{
     FW_BOLD, FillRect, GetDC, GetTextExtentPoint32W, HDC, HFONT, OUT_DEFAULT_PRECIS, ReleaseDC,
     SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
+use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::core::w;
 
 use crate::core::style::rounded_rect_coverage;
@@ -68,11 +70,43 @@ pub fn measure_text(text: &str, pixel_height: i32) -> (i32, i32) {
     }
 }
 
-/// 시스템 모양 배지 색(밝은 회색 바탕, 검은 글자). Windows 11 밝은 테마의 도구 설명 색에 맞춘다.
-/// 어두운 테마 감지는 아직 하지 않는다.
-pub const SYSTEM_BACKGROUND: (u8, u8, u8) = (0xF3, 0xF3, 0xF3);
-pub const SYSTEM_TEXT: (u8, u8, u8) = (0x1F, 0x1F, 0x1F);
+/// 시스템 모양 배지 색. Windows 11 도구 설명(tooltip) 색에 맞춘다.
+const LIGHT_BACKGROUND: (u8, u8, u8) = (0xF3, 0xF3, 0xF3);
+const LIGHT_TEXT: (u8, u8, u8) = (0x1F, 0x1F, 0x1F);
+const DARK_BACKGROUND: (u8, u8, u8) = (0x2B, 0x2B, 0x2B);
+const DARK_TEXT: (u8, u8, u8) = (0xF3, 0xF3, 0xF3);
 pub const WHITE: (u8, u8, u8) = (0xFF, 0xFF, 0xFF);
+
+/// 앱 테마가 어두운 모드인지. 설정 > 개인 설정 > 색 > "기본 앱 모드 선택" 값이다.
+/// 값을 읽을 수 없으면(Windows 10 초기 버전 등) 밝은 모드로 본다.
+fn apps_use_dark_theme() -> bool {
+    let mut value: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let result = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut std::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    result.is_ok() && value == 0
+}
+
+/// 배지의 (바탕색, 글자색)
+pub type BadgeColors = ((u8, u8, u8), (u8, u8, u8));
+
+/// 시스템 모양 배지의 (바탕색, 글자색). 현재 앱 테마를 따른다.
+pub fn system_badge_colors() -> BadgeColors {
+    if apps_use_dark_theme() {
+        (DARK_BACKGROUND, DARK_TEXT)
+    } else {
+        (LIGHT_BACKGROUND, LIGHT_TEXT)
+    }
+}
 
 /// `dc`의 `rect` 영역을 배경색으로 채우고 가운데에 글자를 그린다.
 pub fn draw_badge(

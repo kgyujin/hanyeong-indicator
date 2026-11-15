@@ -4,6 +4,7 @@
 //! 변경사항 내역:
 //! - 2026-11-14 | 5단계 Windows 오버레이 | 레이어드 팝업 창, 둥근 영역, 모니터 작업 영역·DPI 조회 추가
 //! - 2026-11-14 | 사용자 피드백 반영 | 시스템 모양(밝은 회색 바탕) 지원
+//! - 2026-11-15 | 어두운 테마 | 시스템 모양 색이 앱 테마를 따름, 테마가 바뀌면 다시 그림
 //!
 //! 창 성질(바꾸면 사용성이 깨지는 값):
 //! - WS_EX_NOACTIVATE: 배지가 떠도 사용자가 입력하던 창의 포커스를 뺏지 않는다.
@@ -32,7 +33,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
-use super::render::{SYSTEM_BACKGROUND, SYSTEM_TEXT, WHITE, draw_badge, measure_text};
+use super::render::{BadgeColors, WHITE, draw_badge, measure_text, system_badge_colors};
 use crate::core::state::ScreenRect;
 use crate::core::style::{BadgeFill, BadgeLook, BadgeMetrics, badge_metrics};
 
@@ -88,7 +89,8 @@ unsafe extern "system" fn window_proc(
 
 pub struct BadgeOverlay {
     window: HWND,
-    last_look: Option<(BadgeLook, u32)>,
+    /// 마지막으로 그린 (모양, DPI, 바탕색·글자색). 테마가 바뀌어도 다시 그리도록 색까지 비교한다.
+    last_look: Option<(BadgeLook, u32, BadgeColors)>,
     metrics: BadgeMetrics,
     last_origin: Option<(i32, i32)>,
     visible: bool,
@@ -140,10 +142,16 @@ impl BadgeOverlay {
 
     /// 글자·색·크기·불투명도를 바꾼다. `dpi`는 배지가 놓일 모니터의 DPI.
     pub fn apply_look(&mut self, look: &BadgeLook, dpi: u32) {
+        let colors = match look.fill {
+            BadgeFill::System => system_badge_colors(),
+            BadgeFill::Colored(rgb) => (rgb, WHITE),
+        };
         if self
             .last_look
             .as_ref()
-            .is_some_and(|(last, last_dpi)| last == look && *last_dpi == dpi)
+            .is_some_and(|(last, last_dpi, last_colors)| {
+                last == look && *last_dpi == dpi && *last_colors == colors
+            })
         {
             return;
         }
@@ -155,10 +163,7 @@ impl BadgeOverlay {
         let height = self.metrics.height as i32;
         let diameter = (self.metrics.corner_radius * 2.0) as i32;
 
-        let (background, foreground) = match look.fill {
-            BadgeFill::System => (SYSTEM_BACKGROUND, SYSTEM_TEXT),
-            BadgeFill::Colored(rgb) => (rgb, WHITE),
-        };
+        let (background, foreground) = colors;
         PAINT.with(|state| {
             *state.borrow_mut() = PaintState {
                 label: look.label.clone(),
@@ -184,7 +189,7 @@ impl BadgeOverlay {
             let _ = SetLayeredWindowAttributes(self.window, Default::default(), alpha, LWA_ALPHA);
             let _ = InvalidateRect(Some(self.window), None, true);
         }
-        self.last_look = Some((look.clone(), dpi));
+        self.last_look = Some((look.clone(), dpi, colors));
         self.last_origin = None;
     }
 
