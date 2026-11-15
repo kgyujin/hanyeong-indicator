@@ -1,139 +1,146 @@
-# 한영 표시기 (hanyeong-indicator)
+<div align="center">
 
-텍스트 커서 옆에 현재 입력 모드를 작은 배지로 띄우는 macOS·Windows 상주 앱입니다.
-키 입력을 가로채지 않고(전역 키보드 훅 없음) 운영체제가 알려 주는 입력기 상태만 읽습니다.
+# 한영 표시기
+
+**지금 한글인지 영문인지, 텍스트 커서 바로 아래에서 알려 주는 macOS·Windows 앱**
+
+[![npm](https://img.shields.io/npm/v/hanyeong-indicator?label=npm&color=cb3837)](https://www.npmjs.com/package/hanyeong-indicator)
+[![CI](https://github.com/kgyujin/hanyeong-indicator/actions/workflows/ci.yml/badge.svg)](https://github.com/kgyujin/hanyeong-indicator/actions/workflows/ci.yml)
+![macOS 13+ | Windows 10+](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-555)
+[![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+<img src="docs/images/demo.gif" alt="TextEdit에서 입력란에 들어가거나 입력 언어를 바꿀 때 커서 아래에 A, 한, あ 배지가 잠깐 나타났다가 타이핑을 시작하면 사라지는 모습" width="640">
+
+[설치](#설치) · [사용법](#사용법) · [동작 방식](#동작-방식) · [개발](#개발)
+
+</div>
+
+입력란을 클릭하고 타이핑을 시작했는데 한/영이 반대로 되어 있던 적이 있다면, 이 앱이 그 첫 글자를 막아 줍니다.
+입력란에 들어가는 순간과 입력 언어를 바꾸는 순간에만 커서 아래에 작은 배지를 띄우고, 타이핑을 시작하면 바로 사라집니다.
+
+- **필요할 때만 표시**: 입력란 진입·언어 전환 때 잠깐 뜨고, 타이핑하거나 2초가 지나면 숨김
+- **커서 바로 아래**: macOS 기본 입력 소스 표시기와 같은 자리, 같은 회색 모양
+- **한·영·일·중 구분**: 한 / A / あ ア ｱ / 简 繁
+- **키 입력을 보지 않음**: 전역 키보드 훅 없이 운영체제가 알려 주는 입력기 상태만 읽음
+- **가벼움**: 메모리 약 14MB, 대기 CPU 약 0.1% (macOS 실측)
+
+| 영문 | 한글 | 일본어 |
+|:---:|:---:|:---:|
+| <img src="docs/images/badge-latin.png" alt="문서 첫머리 커서 아래의 A 배지" width="260"> | <img src="docs/images/badge-hangul.png" alt="hello 뒤 커서 아래의 한 배지" width="260"> | <img src="docs/images/badge-japanese.png" alt="안녕하세요 뒤 커서 아래의 あ 배지" width="260"> |
+
+## 설치
+
+[Node.js](https://nodejs.org) 18 이상이 있으면 한 줄로 설치하고 바로 실행합니다. 같은 명령으로 최신 버전으로 업데이트합니다.
+
+```bash
+npx hanyeong-indicator
+```
+
+| | 설치 위치 |
+|---|---|
+| macOS | `~/Applications/HanyeongIndicator.app` |
+| Windows | `%LOCALAPPDATA%\Programs\HanyeongIndicator\` |
+
+> [!IMPORTANT]
+> **macOS**는 처음 실행할 때 "손쉬운 사용" 권한을 묻습니다. 허용해야 커서 위치를 알 수 있습니다.
+> 거부하면 입력 언어를 바꿀 때만 마우스 포인터 옆에 배지가 뜹니다.
+> 나중에 허용하려면 메뉴바의 한영 표시기 메뉴에서 "손쉬운 사용 권한 허용…"을 누르세요. 업데이트 후에는 권한을 다시 허용해야 할 수 있습니다.
+
+Node.js 없이 설치하려면 [릴리스 페이지](https://github.com/kgyujin/hanyeong-indicator/releases)에서 zip을 받으세요.
+
+<details>
+<summary>zip으로 설치하기</summary>
+
+- **macOS** (`…-macos-universal.zip`): 압축을 풀고 앱을 응용 프로그램 폴더로 옮겨 실행합니다.
+  "확인되지 않은 개발자" 경고가 뜨면 시스템 설정 > 개인정보 보호 및 보안에서 "그래도 열기"를 누릅니다.
+- **Windows** (`…-windows-x64.zip`, `…-windows-arm64.zip`): 압축을 풀고 `hanyeong-indicator.exe`를 실행합니다.
+  "Windows의 PC 보호" 창이 뜨면 "추가 정보 > 실행"을 누릅니다.
+
+배포본은 코드 서명을 하지 않아 처음 한 번 위 확인이 필요합니다.
+
+</details>
+
+## 사용법
+
+실행하면 메뉴바(macOS) 또는 알림 영역(Windows)에 현재 입력 모드 글자가 나타납니다. 그 메뉴에서 설정을 바꿉니다.
+
+| 메뉴 | 선택지 | 기본값 |
+|---|---|---|
+| 표시 방식 | 입력을 시작할 때 잠깐 / 항상 | 입력을 시작할 때 잠깐 |
+| 모양 | 시스템 기본(회색) / 언어별 색 | 시스템 기본 |
+| 크기 | 작게 / 보통 / 크게 | 보통 |
+| 불투명도 | 50% / 70% / 85% / 100% | 85% |
+| 위치 | 캐럿 아래 / 캐럿 오른쪽 | 캐럿 아래 |
+| 전환할 때 크게 강조 | 켜기 / 끄기 | 끄기 |
+| 로그인할 때 자동 실행 | 켜기 / 끄기 | 끄기 |
+
+배지에 나오는 글자는 다음과 같습니다.
 
 | 입력 상태 | 배지 |
-|---|---|
+|---|:---:|
 | 한글 | 한 |
-| 영문 (일본어·중국어 입력기의 영문 모드 포함) | A |
+| 영문 (일본어·중국어 입력기 안의 영문 모드 포함) | A |
 | 히라가나 / 가타카나 / 반각 가타카나 | あ / ア / ｱ |
 | 중국어 간체 / 번체 | 简 / 繁 |
 | 그 밖의 언어 | 언어 코드 (예: RU) |
-| 읽기 실패 | ? |
+| 읽을 수 없음 (Windows 관리자 권한 창 등) | ? |
 
-## 언제 보이나
-
-기본 표시 방식은 **입력을 시작할 때 잠깐**입니다.
-
-- 띄움: 입력란을 클릭해 커서가 들어간 순간, 입력란 안에서 한/영 등 입력 모드를 바꾼 순간
-- 숨김: 타이핑을 시작하거나(캐럿이 2글자 이상 움직임) 띄운 지 2초가 지나면
-- 입력란이 아니면 띄우지 않습니다.
-- macOS에서 손쉬운 사용 권한이 없으면 입력란인지 알 수 없어, 입력 모드를 바꾼 순간에만 마우스 옆에 2초 띄웁니다.
-
-메뉴의 "표시 방식 > 항상"을 고르면 이전처럼 항상 표시합니다(입력란이 아니면 마우스 옆).
-
-배지는 macOS 기본 입력 소스 표시기처럼 **텍스트 커서 바로 아래 가운데**에, **시스템 기본 모양**(밝기 모드를 따르는 회색 배지)으로 뜹니다.
-언어별 색 배지는 메뉴의 "모양 > 언어별 색"으로 고를 수 있고, 전환할 때 크게 강조하는 동작은 기본으로 꺼져 있습니다.
-
-배지 위치는 캐럿 → 입력란 영역 왼쪽 위(캐럿 좌표를 주지 않는 앱) → 마우스 순서로 정합니다.
-macOS 캐럿 조회는 범위 API(`AXBoundsForRange`)를 먼저 쓰고, 실패하면 텍스트 마커 API(`AXBoundsForTextMarkerRange`, Chromium·Firefox·WebKit)로 다시 시도합니다.
-앞에 있는 앱의 포커스·커서 이동 알림을 받아 바로 갱신하고, 처음 보는 앱에는 Electron 앱이 접근성 정보를 내놓도록 `AXManualAccessibility`를 보냅니다.
-
-## 진행 상황
-
-| 단계 | 상태 |
-|---|---|
-| 1. 기술 검증 (입력 모드·캐럿 프로브) | macOS 입력 모드 확인, 캐럿·Windows는 수동 확인 남음 ([결과](docs/spike-1-results.md)) |
-| 2. 공통 로직 (분류, 위치 계산, 설정) | 완료 |
-| 3. macOS 배지와 메뉴바 메뉴 | 구현, 일부 확인 (아래 "알려진 문제") |
-| 4. macOS 권한 안내 | 구현. 권한이 있는 상태만 확인, 권한 없는 상태는 미검증 |
-| 5~6. Windows 배지·알림 영역 아이콘·UIA 캐럿 | 구현. 교차 컴파일 검사만 통과, **Windows 실행은 미검증** |
-| 입력 시작 시 표시 | 구현. macOS Firefox(2초 숨김)·CotEditor(타이핑으로 숨김) 확인, Windows 미검증 |
-| 기본 표시기 같은 모양·위치, 인식률·반응 속도 개선 | 구현. CotEditor 확인, Chrome·Electron 앱의 텍스트 마커 경로는 미검증 |
-| 7. 자동 실행 | 구현. 등록·해제는 임시 홈 폴더 테스트로만 확인(실제 로그인 항목은 등록하지 않음) |
-| 8. 배포 | macOS 앱 번들 스크립트, GitHub Actions CI·릴리스(서명 없는 zip) 작성. 코드 서명·공증은 하지 않기로 결정(2026-11-15) |
-
-## 실행 (macOS)
+설치된 앱을 다시 실행하거나 제거할 때도 같은 명령을 씁니다.
 
 ```bash
-cargo run --release
+npx hanyeong-indicator start      # 설치된 앱 실행
+npx hanyeong-indicator uninstall  # 앱과 로그인 시 자동 실행 등록 제거(설정 파일은 남김)
 ```
 
-- Dock 아이콘 없이 실행되고, 메뉴바에 현재 입력 모드 글자가 나타납니다.
-- 메뉴바 항목을 눌러 표시 켜기/끄기, 크기, 불투명도, 위치(캐럿 아래/오른쪽), 전환 강조를 바꿀 수 있습니다.
-- 캐럿 위치를 읽으려면 **손쉬운 사용 권한**이 필요합니다. 권한이 없거나 캐럿을 못 읽는 앱에서는 배지가 마우스 포인터 옆에 뜹니다.
-  - 처음 실행할 때 한 번만 시스템 안내창이 뜹니다. 그 뒤에는 메뉴 맨 위 "손쉬운 사용 권한 허용…"으로 설정 화면을 열 수 있습니다.
-  - 권한을 허용하면 다시 시작하지 않아도 캐럿 추적으로 바뀝니다.
-  - 개발 중 `cargo run`으로 실행하면 실행한 터미널 앱의 권한을 따릅니다.
-- 설정 파일: `~/Library/Application Support/dev.hanyeong.hanyeong-indicator/config.toml`
+## 동작 방식
 
-진단 로그: `HANYEONG_DEBUG=1 cargo run`으로 실행하면 배지 기준점(캐럿/마우스)과 좌표가 바뀔 때마다 출력합니다.
+배지를 띄울 때와 숨길 때는 다음 규칙을 따릅니다.
 
-### 앱 번들로 설치 (macOS)
+- **띄움**: 입력란에 커서가 들어간 순간, 입력란 안에서 입력 언어를 바꾼 순간
+- **숨김**: 캐럿이 두 글자 이상 움직이면(타이핑 시작) 또는 2초가 지나면
+- 입력란이 아닌 곳에서는 띄우지 않습니다.
 
-```bash
-scripts/bundle-macos.sh              # dist/HanyeongIndicator.app (이 Mac 아키텍처, 임시 서명)
-scripts/bundle-macos.sh --universal  # Apple Silicon + Intel (rustup target add x86_64-apple-darwin 필요)
-```
+커서 위치는 다음 순서로 찾습니다. 찾지 못하면 다음 방법으로 넘어갑니다.
 
-- 만든 `HanyeongIndicator.app`을 응용 프로그램 폴더로 옮겨 실행합니다. 손쉬운 사용 권한은 이 앱에 따로 허용해야 합니다.
-- 임시 서명 번들은 이 Mac에서만 실행됩니다. 다른 Mac에 배포하려면 `CODESIGN_IDENTITY`로 Developer ID 서명을 하고 공증을 받아야 합니다.
-- 메뉴의 "로그인할 때 자동 실행"은 지금 실행 중인 파일 경로를 `~/Library/LaunchAgents/dev.hanyeong.indicator.plist`에 등록합니다.
-  `cargo run`으로 실행한 상태에서 켜면 target 폴더 경로가 등록되므로, 번들을 옮긴 뒤 번들에서 켜세요.
+| | macOS | Windows |
+|---|---|---|
+| 입력 언어 | 입력 소스 변경 알림(TIS) | 포커스 창의 IME 변환 모드(100ms 간격 확인) |
+| 커서 위치 | 손쉬운 사용 API의 글자 범위 → 텍스트 마커(Chrome·Electron·Firefox) → 입력란 영역 | Win32 캐럿 → UI Automation → 입력란 영역 |
+| 마지막 대체 | 마우스 포인터 옆 | 마우스 포인터 옆 |
+| 필요한 권한 | 손쉬운 사용 | 없음 |
 
-## 실행 (Windows)
-
-```powershell
-cargo run --release
-```
-
-- 알림 영역에 현재 모드 글자 아이콘이 나타나고, 아이콘 메뉴로 설정을 바꿉니다. 별도 권한은 필요 없습니다.
-- 시스템 모양 배지는 설정 > 개인 설정 > 색의 "기본 앱 모드"(밝게/어둡게)를 따릅니다.
-- 캐럿 위치는 Win32 시스템 캐럿(메모장 등) → UI Automation(Chrome, Edge, Office 등) → 마우스 위치 순서로 정합니다.
-- 관리자 권한으로 실행한 창에서는 입력 모드를 읽을 수 없어 "?"로 표시됩니다.
-- 진단 로그: `$env:HANYEONG_DEBUG=1; cargo run`(디버그 빌드는 콘솔 창이 함께 뜹니다). 입력기 원시 값(open, conversion)도 함께 출력합니다.
-- 설정 파일: `%APPDATA%\hanyeong\hanyeong-indicator\config\config.toml`
-- "로그인할 때 자동 실행"은 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`에 등록합니다(관리자 권한 불필요).
-
-## 배포본 설치 (서명 없음)
-
-GitHub 릴리스의 zip은 코드 서명이 없어서, 처음 실행할 때 운영체제가 한 번 막습니다.
-
-- **macOS** (`HanyeongIndicator-<버전>-macos-universal.zip`): 압축을 풀고 앱을 응용 프로그램 폴더로 옮긴 뒤 실행합니다.
-  "확인되지 않은 개발자" 경고가 뜨면 시스템 설정 > 개인정보 보호 및 보안에서 "그래도 열기"를 누릅니다.
-- **Windows** (`HanyeongIndicator-<버전>-windows-x64.zip` 또는 `-arm64.zip`): 압축을 풀고 `hanyeong-indicator.exe`를 실행합니다.
-  "Windows의 PC 보호" 창이 뜨면 "추가 정보 > 실행"을 누릅니다. `hanyeong-probe.exe`는 입력기 진단 도구입니다.
-
-## 릴리스 만들기
-
-1. `Cargo.toml`의 `version`을 올리고 커밋합니다.
-2. 같은 버전으로 태그를 푸시합니다: `git tag v0.1.0 && git push origin v0.1.0`
-3. GitHub Actions의 Release 워크플로가 macOS 유니버설 zip, Windows x64·ARM64 zip을 만들어 **초안 릴리스**에 올립니다.
-4. 릴리스 페이지에서 내용을 확인하고 공개합니다.
-
-배포본만 만들어 보려면 Actions 탭에서 Release 워크플로를 수동 실행합니다(릴리스는 만들지 않음).
-
-## 진단 도구
-
-```bash
-cargo run --release --bin hanyeong-probe -- --help
-```
-
-입력 모드와 캐럿 위치가 바뀔 때마다 원시 값을 출력합니다. Windows에서는 이 도구로 입력기 동작을 확인합니다.
+> [!NOTE]
+> 알려진 제한
+> - macOS 중국어 병음 입력기 안에서 Shift로 바꾸는 영문 모드는 입력 소스가 바뀌지 않아 简으로 표시됩니다.
+> - 타이핑 시작은 키 입력이 아니라 캐럿 이동으로 판단합니다. 화살표 키나 클릭으로 커서를 옮겨도 배지가 사라집니다.
+> - 메뉴바에 항목이 많으면 macOS가 한영 표시기 아이콘을 화면 밖으로 밀어낼 수 있습니다.
+> - Windows 버전은 실제 기기에서 아직 충분히 확인하지 못했습니다. 문제가 있으면 [이슈](https://github.com/kgyujin/hanyeong-indicator/issues)로 알려 주세요.
 
 ## 개발
 
+[Rust](https://rustup.rs) 1.88 이상이 필요합니다.
+
 ```bash
+cargo run --release                     # 앱 실행 (HANYEONG_DEBUG=1 이면 배지 좌표·판정을 출력)
+cargo run --release --bin hanyeong-probe -- --help   # 입력 언어·커서 위치 진단 도구
 cargo test
-cargo clippy --all-targets
-cargo clippy --all-targets --target x86_64-pc-windows-msvc
-cargo fmt --check
+cargo clippy --all-targets --target x86_64-pc-windows-msvc   # macOS에서 Windows 코드 검사
 ```
 
-## 자원 사용량 (macOS, release, 2026-11-15 측정)
+| 작업 | 명령 |
+|---|---|
+| macOS 앱 번들 | `scripts/bundle-macos.sh --universal` → `dist/HanyeongIndicator.app` |
+| npm 패키지 미리 만들기 | `node scripts/npm/stage.mjs --version 0.1.0 --out dist/npm --darwin dist/HanyeongIndicator.app` |
+| README 데모 다시 녹화 | `python3 scripts/demo/record_demo.py` (약 30초 동안 화면을 자동 조작) |
 
-- 실제 메모리 사용량(physical footprint, 활동 모니터의 "메모리"): 14MB
-- RSS는 약 43MB로 더 크게 나오는데, macOS 공용 프레임워크 메모리까지 포함한 값이라 앱이 따로 쓰는 양이 아닙니다.
-- 대기 중 CPU: 약 0.1%
-- 앱 번들 크기: 1.5MB(Apple Silicon 전용), 3.0MB(유니버설)
+### 릴리스
 
-## 알려진 문제
+`Cargo.toml`의 `version`을 올려 `main`에 푸시하면 [Release 워크플로](.github/workflows/release.yml)가 나머지를 처리합니다.
 
-- **메뉴바 항목이 안 보일 수 있음:** 메뉴바에 항목이 많거나 노치가 있는 화면에서는 macOS가 새 항목을 화면 밖으로 밀어냅니다.
-  2026-11-14 측정에서 항목은 생성됐지만 위치가 화면 밖(x=-2201)이었습니다. 다른 메뉴바 항목을 줄이거나 시스템 설정의 메뉴 막대 항목에서 허용 여부를 확인하세요.
-- **Chromium·Electron 앱(macOS):** Claude 데스크톱 앱 입력창은 캐럿 좌표 요청에 빈 사각형을 돌려줘(`EmptyBounds`) 마우스 옆에 표시됩니다.
-  Chrome도 측정한 20초 동안 캐럿 기준 배치가 0건이었습니다. Chromium 전용 텍스트 마커 API(`AXSelectedTextMarkerRange`)로 해결할 수 있는지 조사가 필요합니다.
-- **Firefox(macOS):** 입력란 판정과 입력란 영역은 얻지만 캐럿 글자 위치를 주지 않아, 타이핑으로 숨기지 못하고 2초가 지나야 숨깁니다.
-- **타이핑 판정:** 키 입력을 직접 보지 않고 캐럿 이동으로 추정합니다. 화살표 키나 클릭으로 캐럿을 옮겨도 숨겨집니다.
-- **중국어 병음의 Shift 영문 전환(macOS):** 입력 소스 ID가 바뀌지 않아 简으로 계속 표시됩니다.
+1. macOS 유니버설 앱과 Windows x64·ARM64 실행 파일을 빌드합니다.
+2. `v<버전>` 태그와 GitHub 릴리스를 만들고 zip을 올립니다.
+3. npm에 `hanyeong-indicator`와 OS별 실행 파일 패키지 3개를 배포합니다.
+
+> [!TIP]
+> npm 배포에는 저장소 비밀값 `NPM_TOKEN`(npm 자동화 토큰)이 필요합니다. 없으면 3단계만 건너뜁니다.
+> 토큰을 나중에 등록했다면 Actions 탭에서 Release 워크플로를 수동 실행하면 npm에만 배포됩니다.

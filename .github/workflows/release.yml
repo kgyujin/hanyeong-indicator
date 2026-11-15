@@ -1,100 +1,172 @@
-# 작성목적: v* 태그를 푸시하면 macOS·Windows 배포본을 만들어 GitHub 초안(draft) 릴리스에 올린다.
-# 서명: 2026-11-15 사용자 결정에 따라 서명 없이 배포한다.
-#   - macOS: 임시(ad-hoc) 서명 앱. 받은 사람이 처음 한 번 "확인 없이 열기"를 허용해야 한다.
-#   - Windows: 서명 없는 zip. 처음 실행 때 SmartScreen 경고가 뜬다.
-# 릴리스는 초안으로 만들어 사람이 확인한 뒤 공개한다.
-# 수동 실행(workflow_dispatch)은 배포본만 만들고 릴리스는 만들지 않는다(빌드 확인용).
+# 작성목적: main에 푸시됐을 때 Cargo.toml 버전의 태그가 아직 없으면 자동으로 릴리스한다.
+#   1) macOS 유니버설 앱, Windows x64·ARM64 실행 파일 빌드
+#   2) 태그(v<버전>)와 GitHub 릴리스 생성(zip 첨부)
+#   3) npm 패키지 배포(본체 + OS별 실행 파일 패키지). NPM_TOKEN 비밀값이 없으면 이 단계만 건너뛴다.
+# 결정(2026-11-15): 서명 없이 배포, 버전을 올리면 자동 릴리스, npx 설치 지원.
+# GitHub 릴리스와 npm 배포는 따로 판단한다.
+#   - GitHub 릴리스: 푸시 때 v<버전> 태그가 없으면
+#   - npm 배포: npm에 그 버전이 없고 NPM_TOKEN이 있으면(푸시·수동 실행 모두)
+#   NPM_TOKEN을 나중에 등록했다면 Actions 탭에서 Release를 수동 실행하면 npm에만 올라간다.
+# 둘 다 필요 없으면 수동 실행은 빌드만 확인한다.
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      github_release: ${{ steps.read.outputs.github_release }}
+      npm_publish: ${{ steps.read.outputs.npm_publish }}
+      build: ${{ steps.read.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        name: 버전과 릴리스·배포 필요 여부 확인
+        env:
+          HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+        run: |
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          GITHUB_RELEASE=false
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null \
+            && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            GITHUB_RELEASE=true
+          fi
+
+          NPM_PUBLISH=false
+          if [ "$HAS_NPM_TOKEN" = "true" ] \
+            && [ -z "$(npm view "hanyeong-indicator@$VERSION" version 2>/dev/null)" ]; then
+            NPM_PUBLISH=true
+          fi
+
+          BUILD=false
+          if [ "$GITHUB_RELEASE" = true ] || [ "$NPM_PUBLISH" = true ] \
+            || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            BUILD=true
+          fi
+          echo "v$VERSION: GitHub 릴리스=$GITHUB_RELEASE, npm 배포=$NPM_PUBLISH, 빌드=$BUILD"
+          {
+            echo "github_release=$GITHUB_RELEASE"
+            echo "npm_publish=$NPM_PUBLISH"
+            echo "build=$BUILD"
+          } >> "$GITHUB_OUTPUT"
+
   macos:
+    needs: version
+    if: needs.version.outputs.build == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Rust 준비 (Apple Silicon + Intel)
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-
       - name: 유니버설 앱 번들 만들기
         run: scripts/bundle-macos.sh --universal
-
       - name: zip으로 묶기
         run: |
-          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          ditto -c -k --keepParent dist/HanyeongIndicator.app "dist/HanyeongIndicator-$VERSION-macos-universal.zip"
-
+          ditto -c -k --keepParent dist/HanyeongIndicator.app \
+            "dist/HanyeongIndicator-${{ needs.version.outputs.version }}-macos-universal.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/HanyeongIndicator.app
           if-no-files-found: error
 
   windows:
+    needs: version
+    if: needs.version.outputs.build == 'true'
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
     steps:
       - uses: actions/checkout@v4
-
       - name: Rust 준비
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add ${{ matrix.target }}
-
       - name: 빌드 (앱과 진단 도구)
         run: cargo build --release --target ${{ matrix.target }}
-
       - name: zip으로 묶기
         shell: pwsh
         run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-          $arch = if ("${{ matrix.target }}" -like "aarch64*") { "arm64" } else { "x64" }
-          $out = "dist/HanyeongIndicator-$version-windows-$arch.zip"
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path `
-            "target/${{ matrix.target }}/release/hanyeong-indicator.exe", `
-            "target/${{ matrix.target }}/release/hanyeong-probe.exe", `
-            README.md `
-            -DestinationPath $out
-
+          $dir = "target/${{ matrix.target }}/release"
+          New-Item -ItemType Directory -Force dist/win32-${{ matrix.arch }} | Out-Null
+          Copy-Item "$dir/hanyeong-indicator.exe", "$dir/hanyeong-probe.exe" dist/win32-${{ matrix.arch }}/
+          Compress-Archive -Path dist/win32-${{ matrix.arch }}/*, README.md `
+            -DestinationPath "dist/HanyeongIndicator-${{ needs.version.outputs.version }}-windows-${{ matrix.arch }}.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-${{ matrix.target }}
-          path: dist/*.zip
+          name: windows-${{ matrix.arch }}
+          path: dist
           if-no-files-found: error
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, windows]
-    runs-on: ubuntu-latest
+  publish:
+    needs: [version, macos, windows]
+    if: needs.version.outputs.github_release == 'true' || needs.version.outputs.npm_publish == 'true'
+    runs-on: macos-latest
     permissions:
       contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          path: dist
-          merge-multiple: true
+          path: artifacts
 
-      - name: 초안 릴리스 만들기
+      - name: 태그와 GitHub 릴리스 만들기
+        if: needs.version.outputs.github_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --generate-notes \
-            --title "한영 표시기 ${GITHUB_REF_NAME}"
+          gh release create "v$VERSION" \
+            artifacts/macos/*.zip artifacts/windows-x64/*.zip artifacts/windows-arm64/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "한영 표시기 v$VERSION" \
+            --generate-notes
+
+      - name: npm 패키지 준비
+        if: needs.version.outputs.npm_publish == 'true'
+        run: |
+          # 아티팩트 압축 해제 과정에서 실행 권한이 빠질 수 있어 다시 준다.
+          chmod +x artifacts/macos/HanyeongIndicator.app/Contents/MacOS/hanyeong-indicator
+          node scripts/npm/stage.mjs --version "$VERSION" --out dist/npm \
+            --darwin artifacts/macos/HanyeongIndicator.app \
+            --win32-x64 artifacts/windows-x64/win32-x64 \
+            --win32-arm64 artifacts/windows-arm64/win32-arm64
+
+      - name: npm 배포
+        if: needs.version.outputs.npm_publish == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          # OS별 패키지를 먼저, 본체를 마지막에 올린다.
+          for package in hanyeong-indicator-darwin hanyeong-indicator-win32-x64 hanyeong-indicator-win32-arm64 hanyeong-indicator; do
+            (cd "dist/npm/$package" && npm publish --access public --provenance)
+          done
