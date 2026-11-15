@@ -1,0 +1,37 @@
+# 작성목적: 푸시·PR마다 macOS와 Windows에서 포맷, 린트, 테스트를 확인한다.
+# 외부 액션은 GitHub 공식 checkout만 쓰고, Rust는 러너에 설치된 rustup으로 준비한다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust 준비
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: 포맷 확인
+        run: cargo fmt --check
+
+      - name: 린트 (경고를 오류로 처리)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: 테스트
+        run: cargo test

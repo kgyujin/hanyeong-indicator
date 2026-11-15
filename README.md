@@ -42,7 +42,7 @@ macOS 캐럿 조회는 범위 API(`AXBoundsForRange`)를 먼저 쓰고, 실패�
 | 입력 시작 시 표시 | 구현. macOS Firefox(2초 숨김)·CotEditor(타이핑으로 숨김) 확인, Windows 미검증 |
 | 기본 표시기 같은 모양·위치, 인식률·반응 속도 개선 | 구현. CotEditor 확인, Chrome·Electron 앱의 텍스트 마커 경로는 미검증 |
 | 7. 자동 실행 | 구현. 등록·해제는 임시 홈 폴더 테스트로만 확인(실제 로그인 항목은 등록하지 않음) |
-| 8. 서명·배포 | macOS 앱 번들 스크립트(임시 서명, 유니버설) 완료. Developer ID 서명·공증·Windows 설치 파일·CI는 예정 |
+| 8. 배포 | macOS 앱 번들 스크립트, GitHub Actions CI·릴리스(서명 없는 zip) 작성. 코드 서명·공증은 하지 않기로 결정(2026-11-15) |
 
 ## 실행 (macOS)
 
@@ -85,6 +85,24 @@ cargo run --release
 - 진단 로그: `$env:HANYEONG_DEBUG=1; cargo run`(디버그 빌드는 콘솔 창이 함께 뜹니다). 입력기 원시 값(open, conversion)도 함께 출력합니다.
 - 설정 파일: `%APPDATA%\hanyeong\hanyeong-indicator\config\config.toml`
 - "로그인할 때 자동 실행"은 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`에 등록합니다(관리자 권한 불필요).
+
+## 배포본 설치 (서명 없음)
+
+GitHub 릴리스의 zip은 코드 서명이 없어서, 처음 실행할 때 운영체제가 한 번 막습니다.
+
+- **macOS** (`HanyeongIndicator-<버전>-macos-universal.zip`): 압축을 풀고 앱을 응용 프로그램 폴더로 옮긴 뒤 실행합니다.
+  "확인되지 않은 개발자" 경고가 뜨면 시스템 설정 > 개인정보 보호 및 보안에서 "그래도 열기"를 누릅니다.
+- **Windows** (`HanyeongIndicator-<버전>-windows-x64.zip` 또는 `-arm64.zip`): 압축을 풀고 `hanyeong-indicator.exe`를 실행합니다.
+  "Windows의 PC 보호" 창이 뜨면 "추가 정보 > 실행"을 누릅니다. `hanyeong-probe.exe`는 입력기 진단 도구입니다.
+
+## 릴리스 만들기
+
+1. `Cargo.toml`의 `version`을 올리고 커밋합니다.
+2. 같은 버전으로 태그를 푸시합니다: `git tag v0.1.0 && git push origin v0.1.0`
+3. GitHub Actions의 Release 워크플로가 macOS 유니버설 zip, Windows x64·ARM64 zip을 만들어 **초안 릴리스**에 올립니다.
+4. 릴리스 페이지에서 내용을 확인하고 공개합니다.
+
+배포본만 만들어 보려면 Actions 탭에서 Release 워크플로를 수동 실행합니다(릴리스는 만들지 않음).
 
 ## 진단 도구
 

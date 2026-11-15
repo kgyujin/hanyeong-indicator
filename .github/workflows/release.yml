@@ -1,0 +1,100 @@
+# 작성목적: v* 태그를 푸시하면 macOS·Windows 배포본을 만들어 GitHub 초안(draft) 릴리스에 올린다.
+# 서명: 2026-11-15 사용자 결정에 따라 서명 없이 배포한다.
+#   - macOS: 임시(ad-hoc) 서명 앱. 받은 사람이 처음 한 번 "확인 없이 열기"를 허용해야 한다.
+#   - Windows: 서명 없는 zip. 처음 실행 때 SmartScreen 경고가 뜬다.
+# 릴리스는 초안으로 만들어 사람이 확인한 뒤 공개한다.
+# 수동 실행(workflow_dispatch)은 배포본만 만들고 릴리스는 만들지 않는다(빌드 확인용).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust 준비 (Apple Silicon + Intel)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: 유니버설 앱 번들 만들기
+        run: scripts/bundle-macos.sh --universal
+
+      - name: zip으로 묶기
+        run: |
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          ditto -c -k --keepParent dist/HanyeongIndicator.app "dist/HanyeongIndicator-$VERSION-macos-universal.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust 준비
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: 빌드 (앱과 진단 도구)
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: zip으로 묶기
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $arch = if ("${{ matrix.target }}" -like "aarch64*") { "arm64" } else { "x64" }
+          $out = "dist/HanyeongIndicator-$version-windows-$arch.zip"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path `
+            "target/${{ matrix.target }}/release/hanyeong-indicator.exe", `
+            "target/${{ matrix.target }}/release/hanyeong-probe.exe", `
+            README.md `
+            -DestinationPath $out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.target }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 초안 릴리스 만들기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --generate-notes \
+            --title "한영 표시기 ${GITHUB_REF_NAME}"
