@@ -27,6 +27,9 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy,rustfmt
           rustup default stable
 
+      - name: 버전 일치 확인 (Cargo.toml, package.json)
+        run: node scripts/npm/check-versions.mjs
+
       - name: 포맷 확인
         run: cargo fmt --check
 

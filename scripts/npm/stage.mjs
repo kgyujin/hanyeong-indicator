@@ -5,12 +5,16 @@
  * 작성일: 2026-11-15
  * 변경사항 내역:
  * - 2026-11-15 | npx 설치 | 본체·darwin·win32-x64·win32-arm64 패키지 생성, 버전 일치, README 이미지 주소 변환
+ * - 2026-11-15 | npm 없이 npx | --standalone true: OS별 패키지 의존성을 뺀 본체만 만듦(릴리스 첨부용)
  *
  * 사용법:
  *   node scripts/npm/stage.mjs --version 0.1.0 --out dist/npm \
  *     [--darwin dist/HanyeongIndicator.app] \
  *     [--win32-x64 target/x86_64-pc-windows-msvc/release] \
- *     [--win32-arm64 target/aarch64-pc-windows-msvc/release]
+ *     [--win32-arm64 target/aarch64-pc-windows-msvc/release] [--standalone true]
+ *
+ * --standalone true: 본체 package.json에서 optionalDependencies를 뺀다. 설치 명령이 실행 파일을
+ * GitHub 릴리스에서 받으므로 npm 레지스트리가 필요 없다(`npx <릴리스의 hanyeong-indicator.tgz 주소>`).
  *
  * 출력: <out>/<패키지 이름>/ 폴더. 각 폴더에서 `npm publish`하면 된다.
  * OS별 패키지를 먼저 올리고 본체를 마지막에 올려야 본체 설치 때 의존성을 찾을 수 있다.
@@ -119,8 +123,12 @@ function main() {
   cpSync(join(ROOT, "npm", "hanyeong-indicator"), main, { recursive: true });
   const manifest = JSON.parse(readFileSync(join(main, "package.json"), "utf8"));
   manifest.version = options.version;
-  for (const name of Object.keys(manifest.optionalDependencies)) {
-    manifest.optionalDependencies[name] = options.version;
+  if (options.standalone === "true") {
+    delete manifest.optionalDependencies;
+  } else {
+    for (const name of Object.keys(manifest.optionalDependencies)) {
+      manifest.optionalDependencies[name] = options.version;
+    }
   }
   manifest.files = ["bin/cli.js", "README.md", "LICENSE"];
   writeJson(join(main, "package.json"), manifest);

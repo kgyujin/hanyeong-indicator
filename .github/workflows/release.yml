@@ -1,6 +1,6 @@
 # 작성목적: main에 푸시됐을 때 Cargo.toml 버전의 태그가 아직 없으면 자동으로 릴리스한다.
 #   1) macOS 유니버설 앱, Windows x64·ARM64 실행 파일 빌드
-#   2) 태그(v<버전>)와 GitHub 릴리스 생성(zip 첨부)
+#   2) 태그(v<버전>)와 GitHub 릴리스 생성(zip 첨부, git 없이 npx로 쓰는 설치 명령 묶음 hanyeong-indicator.tgz 첨부)
 #   3) npm 패키지 배포(본체 + OS별 실행 파일 패키지). NPM_TOKEN 비밀값이 없으면 이 단계만 건너뛴다.
 # 결정(2026-11-15): 서명 없이 배포, 버전을 올리면 자동 릴리스, npx 설치 지원.
 # GitHub 릴리스와 npm 배포는 따로 판단한다.
@@ -149,6 +149,17 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "한영 표시기 v$VERSION" \
             --generate-notes
+
+      - name: npx 설치 명령 묶음(hanyeong-indicator.tgz) 첨부
+        if: needs.version.outputs.github_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # npm 레지스트리 없이 쓰는 묶음이라 OS별 npm 패키지 의존성을 뺀다(실행 파일은 릴리스 zip에서 받음).
+          node scripts/npm/stage.mjs --version "$VERSION" --out dist/standalone --standalone true
+          (cd dist/standalone/hanyeong-indicator && npm pack --pack-destination ../..)
+          mv "dist/hanyeong-indicator-$VERSION.tgz" dist/hanyeong-indicator.tgz
+          gh release upload "v$VERSION" dist/hanyeong-indicator.tgz --clobber
 
       - name: npm 패키지 준비
         if: needs.version.outputs.npm_publish == 'true'

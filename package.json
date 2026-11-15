@@ -1,0 +1,21 @@
+{
+  "name": "hanyeong-indicator",
+  "version": "0.1.0",
+  "description": "텍스트 커서 옆에 한/영 입력 상태를 표시하는 macOS·Windows 앱. npx github:kgyujin/hanyeong-indicator 로 설치합니다.",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kgyujin/hanyeong-indicator.git"
+  },
+  "bin": {
+    "hanyeong-indicator": "npm/hanyeong-indicator/bin/cli.js"
+  },
+  "files": [
+    "npm/hanyeong-indicator/bin/cli.js",
+    "npm/hanyeong-indicator/package.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -4,7 +4,7 @@
 
 **지금 한글인지 영문인지, 텍스트 커서 바로 아래에서 알려 주는 macOS·Windows 앱**
 
-[![npm](https://img.shields.io/npm/v/hanyeong-indicator?label=npm&color=cb3837)](https://www.npmjs.com/package/hanyeong-indicator)
+[![Release](https://img.shields.io/github/v/release/kgyujin/hanyeong-indicator?label=release)](https://github.com/kgyujin/hanyeong-indicator/releases/latest)
 [![CI](https://github.com/kgyujin/hanyeong-indicator/actions/workflows/ci.yml/badge.svg)](https://github.com/kgyujin/hanyeong-indicator/actions/workflows/ci.yml)
 ![macOS 13+ | Windows 10+](https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Windows%2010%2B-555)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -33,8 +33,16 @@
 [Node.js](https://nodejs.org) 18 이상이 있으면 한 줄로 설치하고 바로 실행합니다. 같은 명령으로 최신 버전으로 업데이트합니다.
 
 ```bash
-npx hanyeong-indicator
+npx github:kgyujin/hanyeong-indicator
 ```
+
+git이 없다면(주로 Windows) 릴리스에 올린 설치 묶음을 바로 실행합니다.
+
+```bash
+npx https://github.com/kgyujin/hanyeong-indicator/releases/latest/download/hanyeong-indicator.tgz
+```
+
+두 명령 모두 npm에 올린 패키지를 쓰지 않습니다. 설치 명령은 GitHub 저장소(또는 릴리스)에서 받고, 앱은 [GitHub 릴리스](https://github.com/kgyujin/hanyeong-indicator/releases)에서 내려받습니다.
 
 | | 설치 위치 |
 |---|---|
@@ -88,8 +96,8 @@ Node.js 없이 설치하려면 [릴리스 페이지](https://github.com/kgyujin/
 설치된 앱을 다시 실행하거나 제거할 때도 같은 명령을 씁니다.
 
 ```bash
-npx hanyeong-indicator start      # 설치된 앱 실행
-npx hanyeong-indicator uninstall  # 앱과 로그인 시 자동 실행 등록 제거(설정 파일은 남김)
+npx github:kgyujin/hanyeong-indicator start      # 설치된 앱 실행
+npx github:kgyujin/hanyeong-indicator uninstall  # 앱과 로그인 시 자동 실행 등록 제거(설정 파일은 남김)
 ```
 
 ## 동작 방식
@@ -130,17 +138,19 @@ cargo clippy --all-targets --target x86_64-pc-windows-msvc   # macOS에서 Windo
 | 작업 | 명령 |
 |---|---|
 | macOS 앱 번들 | `scripts/bundle-macos.sh --universal` → `dist/HanyeongIndicator.app` |
-| npm 패키지 미리 만들기 | `node scripts/npm/stage.mjs --version 0.1.0 --out dist/npm --darwin dist/HanyeongIndicator.app` |
+| 설치 묶음 미리 만들기 | `node scripts/npm/stage.mjs --version 0.1.0 --out dist/npm --standalone true` |
+| 버전 일치 확인 | `node scripts/npm/check-versions.mjs` |
 | README 데모 다시 녹화 | `python3 scripts/demo/record_demo.py` (약 30초 동안 화면을 자동 조작) |
 
 ### 릴리스
 
-`Cargo.toml`의 `version`을 올려 `main`에 푸시하면 [Release 워크플로](.github/workflows/release.yml)가 나머지를 처리합니다.
+버전을 올려 `main`에 푸시하면 [Release 워크플로](.github/workflows/release.yml)가 나머지를 처리합니다.
+버전은 `Cargo.toml`, `package.json`, `npm/hanyeong-indicator/package.json` 세 곳을 함께 바꿉니다(CI가 일치 여부를 검사).
 
 1. macOS 유니버설 앱과 Windows x64·ARM64 실행 파일을 빌드합니다.
-2. `v<버전>` 태그와 GitHub 릴리스를 만들고 zip을 올립니다.
-3. npm에 `hanyeong-indicator`와 OS별 실행 파일 패키지 3개를 배포합니다.
+2. `v<버전>` 태그와 GitHub 릴리스를 만들고 zip과 설치 묶음(`hanyeong-indicator.tgz`)을 올립니다.
+   이때부터 위의 `npx` 명령이 새 버전을 설치합니다.
 
 > [!TIP]
-> npm 배포에는 저장소 비밀값 `NPM_TOKEN`(npm 자동화 토큰)이 필요합니다. 없으면 3단계만 건너뜁니다.
-> 토큰을 나중에 등록했다면 Actions 탭에서 Release 워크플로를 수동 실행하면 npm에만 배포됩니다.
+> npm 레지스트리에도 올리고 싶다면 저장소 비밀값 `NPM_TOKEN`을 등록하세요. 등록돼 있으면 같은 워크플로가
+> `hanyeong-indicator`와 OS별 실행 파일 패키지 3개를 npm에 배포해, `npx hanyeong-indicator`로도 설치할 수 있게 됩니다.
