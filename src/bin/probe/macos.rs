@@ -286,6 +286,22 @@ fn build_self_test(start: Instant) -> Option<SelfTest> {
 }
 
 pub fn run(options: Options) {
+    // 데모 녹화·스크립트용 단발 명령: 출력만 하고 바로 끝낸다.
+    if options.print_source {
+        match ime::current_input_source() {
+            Some(info) => println!("{}", info.id),
+            None => std::process::exit(1),
+        }
+        return;
+    }
+    if let Some(id) = &options.select {
+        if let Err(message) = ime::select_input_source(id) {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let start = Instant::now();
     let trusted = if options.prompt {
         caret::prompt_for_trust()

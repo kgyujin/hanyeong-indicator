@@ -8,6 +8,7 @@
 //! - 2026-11-14 | 인식률 개선 | 입력란 오판정(라디오 버튼 등) 수정, 텍스트 마커 기반 캐럿 조회 추가(Chromium·Firefox·WebKit)
 //! - 2026-11-14 | 사용자 실측 반영 | 높이 4px 미만 캐럿 좌표 버림(Electron 첫 조회의 1px 좌표로 배지가 튐), 입력란 영역은 캐럿 실패 시에만 조회
 //! - 2026-11-15 | 안전장치 | 높이 120px 초과 좌표 버림(Chrome 텍스트 마커가 페이지 전체 사각형을 돌려준 사례)
+//! - 2026-11-15 | 위치 버그 수정 | 캐럿 좌표를 앞 글자 범위에서 먼저 구함(TextEdit의 길이 0 범위가 한 줄 위 좌표를 돌려줌)
 //!
 //! 권한: 캐럿 조회는 "손쉬운 사용" 권한이 필요하다. 마우스 위치(CGEvent)는 권한이 필요 없다.
 //! 좌표: AX와 CGEvent 모두 주 모니터 좌상단 원점(core::state 좌표 규칙과 같음).
@@ -229,19 +230,13 @@ fn is_text_input(element: &CFType) -> bool {
 /// 범위 기반 API(AXBoundsForRange)가 빈 좌표를 주는 앱에서 쓴다.
 ///
 /// 시도 순서:
-/// 1. 선택된 텍스트 마커 범위(캐럿이면 길이 0)의 사각형
-/// 2. 캐럿 바로 앞 글자 범위의 오른쪽 끝
+/// 1. 캐럿 바로 앞 글자 범위의 오른쪽 끝
+/// 2. 선택된 텍스트 마커 범위(캐럿이면 길이 0)의 사각형
 fn caret_from_text_marker(element: &CFType) -> Result<ScreenRect, CaretError> {
     let selected = copy_attribute(element, "AXSelectedTextMarkerRange")
         .map_err(CaretError::NoSelectedRange)?;
-    let failure = match copy_parameterized(element, "AXBoundsForTextMarkerRange", &selected)
-        .and_then(|value| rect_value(&value))
-    {
-        Ok(rect) if is_usable(&rect) => return Ok(caret_from_rect(rect.origin.x, &rect)),
-        Ok(_) => CaretError::EmptyBounds,
-        Err(error) => CaretError::NoBounds(error),
-    };
 
+    // 1. 캐럿 바로 앞 글자 범위의 오른쪽 끝(범위 기반 조회와 같은 이유로 먼저 시도)
     let previous_range =
         copy_parameterized(element, "AXStartTextMarkerForTextMarkerRange", &selected).and_then(
             |start| {
@@ -255,13 +250,24 @@ fn caret_from_text_marker(element: &CFType) -> Result<ScreenRect, CaretError> {
                 )
             },
         );
-    match previous_range.and_then(|range| {
+    let previous_failure = match previous_range.and_then(|range| {
         copy_parameterized(element, "AXBoundsForTextMarkerRange", &range)
             .and_then(|value| rect_value(&value))
     }) {
-        Ok(rect) if is_usable(&rect) => Ok(caret_from_rect(rect.origin.x + rect.size.width, &rect)),
+        Ok(rect) if is_usable(&rect) => {
+            return Ok(caret_from_rect(rect.origin.x + rect.size.width, &rect));
+        }
+        Ok(_) => CaretError::EmptyBounds,
+        Err(error) => CaretError::NoBounds(error),
+    };
+
+    // 2. 선택된 범위(캐럿이면 길이 0) 자체의 사각형
+    match copy_parameterized(element, "AXBoundsForTextMarkerRange", &selected)
+        .and_then(|value| rect_value(&value))
+    {
+        Ok(rect) if is_usable(&rect) => Ok(caret_from_rect(rect.origin.x, &rect)),
         Ok(_) => Err(CaretError::EmptyBounds),
-        Err(_) => Err(failure),
+        Err(_) => Err(previous_failure),
     }
 }
 
@@ -289,34 +295,56 @@ fn element_frame(element: &CFType) -> Option<ScreenRect> {
     })
 }
 
+/// 범위의 글자열. 앞 글자가 줄바꿈인지 확인하는 데 쓴다.
+fn string_for_range(element: &CFType, range: CFRange) -> Option<String> {
+    // SAFETY: AXValueCreate는 Create rule
+    let range_value = unsafe {
+        CFType::wrap_under_create_rule(ffi::AXValueCreate(
+            ffi::kAXValueCFRangeType,
+            &range as *const CFRange as *const c_void,
+        ))
+    };
+    copy_parameterized(element, "AXStringForRange", &range_value)
+        .ok()?
+        .downcast::<CFString>()
+        .map(|text| text.to_string())
+}
+
 /// 캐럿 글자 위치에서 화면 사각형을 구한다.
 ///
 /// 시도 순서:
-/// 1. 캐럿 위치의 길이 0 범위
-/// 2. 캐럿 바로 앞 글자(길이 1)의 오른쪽 끝
-/// 3. 캐럿 바로 뒤 글자(길이 1)의 왼쪽 끝
+/// 1. 캐럿 바로 앞 글자(길이 1)의 오른쪽 끝. 앞 글자가 줄바꿈이면 이전 줄이므로 건너뛴다.
+/// 2. 캐럿 바로 뒤 글자(길이 1)의 왼쪽 끝
+/// 3. 캐럿 위치의 길이 0 범위
+///
+/// 길이 0 범위를 마지막에 두는 이유(2026-11-15 실측): TextEdit는 길이 0 범위에
+/// 실제 줄보다 한 줄(24px) 위의 좌표를 돌려준다(글자 범위 y=235, 길이 0 범위 y=211).
+/// 이 값을 먼저 쓰면 배지가 커서 아래가 아니라 글자와 같은 줄에 겹쳐 뜬다.
 fn caret_rect_at(element: &CFType, caret_index: isize) -> Result<ScreenRect, CaretError> {
     // (요청할 범위, 캐럿을 사각형 오른쪽 끝에서 읽는지)
-    let mut attempts = vec![(
-        CFRange {
-            location: caret_index,
-            length: 0,
-        },
-        false,
-    )];
+    let mut attempts = Vec::with_capacity(3);
     if caret_index > 0 {
-        attempts.push((
-            CFRange {
-                location: caret_index - 1,
-                length: 1,
-            },
-            true,
-        ));
+        let previous = CFRange {
+            location: caret_index - 1,
+            length: 1,
+        };
+        let is_line_break = string_for_range(element, previous)
+            .is_some_and(|text| text == "\n" || text == "\r" || text == "\u{2028}");
+        if !is_line_break {
+            attempts.push((previous, true));
+        }
     }
     attempts.push((
         CFRange {
             location: caret_index,
             length: 1,
+        },
+        false,
+    ));
+    attempts.push((
+        CFRange {
+            location: caret_index,
+            length: 0,
         },
         false,
     ));

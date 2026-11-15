@@ -9,6 +9,8 @@ hanyeong-probe: 입력 모드와 캐럿 위치를 바뀔 때마다 출력하는 
   --prompt         (macOS) 손쉬운 사용 권한이 없으면 시스템 안내창을 띄움
   --electron-fix   (macOS) 포커스된 앱에 AXManualAccessibility=true 설정(Electron 앱 캐럿 노출)
   --self-test      (macOS) 켜 둔 입력 소스를 자동으로 바꿔 가며 감지 지연을 측정하고 원래 소스로 복구
+  --select ID      (macOS) 입력 소스를 ID로 선택하고 끝냄(예: com.apple.keylayout.ABC)
+  --print-source   (macOS) 현재 입력 소스 ID를 출력하고 끝냄
 
 출력 태그:
   [notify]  OS 알림으로 감지한 입력 모드 변경(macOS)

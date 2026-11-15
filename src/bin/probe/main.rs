@@ -3,6 +3,7 @@
 //! 작성일: 2026-11-14
 //! 변경사항 내역:
 //! - 2026-11-14 | 1단계 기술 검증 | macOS·Windows 프로브 CLI 추가
+//! - 2026-11-15 | README 데모 녹화 | (macOS) --select, --print-source 추가
 //!
 //! 옵션과 출력 태그 설명은 usage.txt(`--help` 출력)에 있다.
 
@@ -20,6 +21,10 @@ pub struct Options {
     pub prompt: bool,
     pub electron_fix: bool,
     pub self_test: bool,
+    /// (macOS) 이 입력 소스를 선택하고 바로 끝낸다
+    pub select: Option<String>,
+    /// (macOS) 현재 입력 소스 ID를 출력하고 바로 끝낸다
+    pub print_source: bool,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -29,6 +34,8 @@ fn parse_args() -> Result<Options, String> {
         prompt: false,
         electron_fix: false,
         self_test: false,
+        select: None,
+        print_source: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -46,6 +53,8 @@ fn parse_args() -> Result<Options, String> {
             "--prompt" => options.prompt = true,
             "--electron-fix" => options.electron_fix = true,
             "--self-test" => options.self_test = true,
+            "--select" => options.select = Some(args.next().ok_or("--select 값이 없음")?),
+            "--print-source" => options.print_source = true,
             "-h" | "--help" => {
                 println!("{}", include_str!("usage.txt"));
                 std::process::exit(0);
